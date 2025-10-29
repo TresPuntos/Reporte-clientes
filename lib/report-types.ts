@@ -13,6 +13,8 @@ export interface ClientReport {
   publicUrl: string; // Token único para el link
   isActive: boolean;
   configs: ReportConfig[];
+  reportTags: ReportTag[]; // Tags del reporte con su estado
+  activeTag?: string; // Tag actualmente activo
   entries: TimeEntry[];
   summary: ReportSummary;
 }
@@ -53,7 +55,12 @@ export interface ReportConfig {
   selectedApiKey: string;
   selectedClient?: string;
   selectedProject?: string;
-  selectedTag?: string;
+  selectedTags?: string[]; // Múltiples tags en lugar de uno solo
+}
+
+export interface ReportTag {
+  name: string;
+  status: 'active' | 'completed'; // Estado del tag
 }
 
 export interface ApiKeyInfo {

@@ -86,8 +86,12 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
           if (config.selectedProject) {
             filtered = filtered.filter((entry: any) => entry.pid === Number(config.selectedProject));
           }
-          if (config.selectedTag) {
-            filtered = filtered.filter((entry: any) => entry.tags && entry.tags.includes(config.selectedTag!));
+          // Filtrar por tags del reporte si están configurados
+          if (report.reportTags && report.reportTags.length > 0) {
+            const reportTagNames = report.reportTags.map(t => t.name);
+            filtered = filtered.filter((entry: any) => 
+              entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
+            );
           }
 
           const enriched = filtered.map((entry: any) => {
@@ -291,8 +295,12 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
         if (config.selectedProject) {
           filtered = filtered.filter((entry: any) => entry.pid === Number(config.selectedProject));
         }
-        if (config.selectedTag) {
-          filtered = filtered.filter((entry: any) => entry.tags && entry.tags.includes(config.selectedTag!));
+        // Filtrar por tags del reporte si están configurados
+        if (report.reportTags && report.reportTags.length > 0) {
+          const reportTagNames = report.reportTags.map(t => t.name);
+          filtered = filtered.filter((entry: any) => 
+            entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
+          );
         }
 
         const enriched = filtered.map((entry: any) => {
@@ -536,6 +544,18 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
 
                 {/* Row 2 */}
                 <div className="grid grid-cols-2 gap-4">
+                  {/* Tag Activo */}
+                  {report.activeTag && (
+                    <Card className="col-span-2 border-green-500 border-2">
+                      <CardContent className="p-4 flex items-start gap-3">
+                        <CheckCircle className="w-8 h-8 text-green-600 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-muted-foreground">Tag Activo</p>
+                          <p className="text-xl font-bold text-green-700">{report.activeTag}</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
                   {/* Tareas Completadas */}
                   <Card>
                     <CardContent className="p-4 flex items-start gap-3">
@@ -983,6 +1003,8 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                         <div className="flex-1 text-left">
                           <p className="font-bold text-foreground">{task.description}</p>
                           <p className="text-sm mt-1 text-muted-foreground">{task.count} entradas</p>
+                          
+                          {/* Tags de las entradas */}
                           {Array.from(tags).length > 0 && (
                             <div className="flex gap-2 mt-2">
                               {Array.from(tags).slice(0, 5).map((tag, tIdx) => (
@@ -991,6 +1013,34 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                                 </Badge>
                               ))}
                             </div>
+                          )}
+                          
+                          {/* Desplegable de Tags del Reporte */}
+                          {report.reportTags && report.reportTags.length > 0 && (
+                            <details className="mt-2">
+                              <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 inline-block">
+                                Tags del reporte ({report.reportTags.length}) ▼
+                              </summary>
+                              <div className="mt-2 flex flex-wrap gap-1 pl-4">
+                                {report.reportTags.map((reportTag) => {
+                                  const isActive = reportTag.name === report.activeTag;
+                                  const status = reportTag.status === 'active' || isActive ? 'active' : 'completed';
+                                  return (
+                                    <Badge
+                                      key={reportTag.name}
+                                      variant={isActive ? 'default' : 'secondary'}
+                                      className={isActive ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}
+                                    >
+                                      {reportTag.name}
+                                      {isActive && <span className="ml-1 text-xs">(Activo)</span>}
+                                      {status === 'completed' && !isActive && (
+                                        <span className="ml-1 text-xs">(Completado)</span>
+                                      )}
+                                    </Badge>
+                                  );
+                                })}
+                              </div>
+                            </details>
                           )}
                         </div>
                         

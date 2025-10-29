@@ -1,9 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { ClientReport, ReportConfig } from '@/lib/report-types';
 import type { ApiKeyInfo } from '@/lib/types';
 import { saveReport } from '@/lib/report-types';
+import { getMe, getTimeEntries } from '@/lib/toggl';
+import ReportTagsManager from '@/components/report-tags-manager';
+import type { ReportTag } from '@/lib/report-types';
 import {
   calculateConsumptionSpeed,
   calculateAverageHoursPerTask,
@@ -29,36 +32,164 @@ export default function EditReportDialog({
   const [price, setPrice] = useState(report.price || 0);
   const [startDate, setStartDate] = useState(report.startDate);
   const [isActive, setIsActive] = useState(report.isActive);
+  const [configs, setConfigs] = useState<ReportConfig[]>(report.configs);
+  const [availableData, setAvailableData] = useState<Record<string, { clients: any[], projects: any[], tags: any[] }>>({});
+  const [loading, setLoading] = useState(false);
+  const [reportTags, setReportTags] = useState(report.reportTags || []);
+  const [activeTag, setActiveTag] = useState(report.activeTag);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+
+  // Cargar datos disponibles de Toggl para cada API key
+  useEffect(() => {
+    const loadAvailableData = async () => {
+      const data: Record<string, { clients: any[], projects: any[], tags: any[] }> = {};
+      const allTags = new Set<string>();
+      
+      for (const apiKey of apiKeys) {
+        try {
+          const me = await getMe(apiKey.key);
+          data[apiKey.id] = {
+            clients: me.clients || [],
+            projects: me.projects || [],
+            tags: me.tags || [],
+          };
+          // Recolectar todos los tags disponibles
+          (me.tags || []).forEach((tag: any) => {
+            allTags.add(tag.name);
+          });
+        } catch (error) {
+          console.error(`Error loading data for API key ${apiKey.id}:`, error);
+          data[apiKey.id] = { clients: [], projects: [], tags: [] };
+        }
+      }
+      
+      setAvailableData(data);
+      setAvailableTags(Array.from(allTags));
+    };
+    
+    loadAvailableData();
+  }, [apiKeys]);
+
+  const updateConfig = (configId: string, updates: Partial<ReportConfig>) => {
+    setConfigs(prev => prev.map(config => 
+      config.id === configId ? { ...config, ...updates } : config
+    ));
+  };
+
+  const addConfig = () => {
+    if (apiKeys.length === 0) return;
+    const newConfig: ReportConfig = {
+      id: crypto.randomUUID(),
+      selectedApiKey: apiKeys[0].id,
+    };
+    setConfigs([...configs, newConfig]);
+  };
+
+  const removeConfig = (configId: string) => {
+    setConfigs(prev => prev.filter(config => config.id !== configId));
+  };
 
   const handleSave = async () => {
-    const updatedReport: ClientReport = {
-      ...report,
-      name,
-      totalHours,
-      price,
-      startDate,
-      isActive,
-      lastUpdated: new Date().toISOString(),
-    };
+    setLoading(true);
+    try {
+      const updatedReport: ClientReport = {
+        ...report,
+        name,
+        totalHours,
+        price,
+        startDate,
+        isActive,
+        configs, // Incluir las configuraciones actualizadas
+        reportTags,
+        activeTag,
+        lastUpdated: new Date().toISOString(),
+      };
 
-    await saveReport(updatedReport);
-    onUpdated();
-    onClose();
+      await saveReport(updatedReport);
+      onUpdated();
+      onClose();
+    } catch (error) {
+      alert('Error al guardar: ' + (error instanceof Error ? error.message : 'Error desconocido'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRecalculate = async () => {
-    if (!confirm('¿Recalcular este reporte con los nuevos cálculos mejorados? Esto actualizará todas las estadísticas del reporte.')) {
+    if (!confirm('¿Recalcular este reporte con los nuevos filtros y cálculos mejorados? Esto actualizará todas las estadísticas y volverá a obtener las entradas de Toggl con los filtros actualizados.')) {
       return;
     }
 
+    setLoading(true);
     try {
-      // Recalcular estadísticas con las funciones mejoradas
-      const totalConsumed = report.entries.reduce((sum, e) => sum + e.duration, 0) / 3600;
-      const speed = calculateConsumptionSpeed(report.entries);
-      const avgHours = calculateAverageHoursPerTask(report.entries);
-      const groupedTasks = groupTasksByDescription(report.entries);
-      const teamDist = calculateTeamDistribution(report.entries);
-      const evolution = calculateConsumptionEvolution(report.entries);
+      // Separar entradas históricas (CSV) de las entradas de Toggl
+      const historicalEntries = report.entries.filter((e: any) => e.id < 0);
+      
+      // Obtener API keys desde localStorage
+      const stored = localStorage.getItem('toggl_api_keys');
+      if (!stored) {
+        throw new Error('No se encontraron API keys configuradas');
+      }
+      
+      const storedApiKeys = JSON.parse(stored);
+      const currentDate = new Date().toISOString().split('T')[0];
+      const allTogglEntries: any[] = [];
+
+      // Obtener nuevas entradas de Toggl usando las configuraciones ACTUALIZADAS
+      for (const config of configs) {
+        const apiKeyInfo = storedApiKeys.find((k: any) => k.id === config.selectedApiKey);
+        if (!apiKeyInfo) continue;
+
+        const workspaceId = apiKeyInfo.workspaces[0]?.id;
+        if (!workspaceId) continue;
+
+        const entries = await getTimeEntries(apiKeyInfo.key, startDate, currentDate, workspaceId);
+
+        // Aplicar filtros con las configuraciones actualizadas
+        let filtered = entries;
+        if (config.selectedClient) {
+          filtered = filtered.filter((entry: any) => {
+            const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
+            return project && project.cid === Number(config.selectedClient);
+          });
+        }
+        if (config.selectedProject) {
+          filtered = filtered.filter((entry: any) => entry.pid === Number(config.selectedProject));
+        }
+        // Filtrar por tags del reporte si están configurados
+        if (reportTags.length > 0) {
+          const reportTagNames = reportTags.map(t => t.name);
+          filtered = filtered.filter((entry: any) => 
+            entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
+          );
+        }
+
+        // Enriquecer entradas
+        const enriched = filtered.map((entry: any) => {
+          const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
+          const client = project?.cid ? apiKeyInfo.clients.find((c: any) => c.id === project.cid) : null;
+          return {
+            ...entry,
+            project_name: project?.name || 'Sin proyecto',
+            client_name: client?.name || 'Sin cliente',
+            tag_names: entry.tags || [],
+            user_name: apiKeyInfo.fullname,
+          };
+        });
+
+        allTogglEntries.push(...enriched);
+      }
+
+      // Combinar entradas históricas (CSV) con las nuevas entradas de Toggl
+      const allEntries = [...historicalEntries, ...allTogglEntries];
+
+      // Recalcular estadísticas con todas las entradas
+      const totalConsumed = allEntries.reduce((sum, e) => sum + e.duration, 0) / 3600;
+      const speed = calculateConsumptionSpeed(allEntries);
+      const avgHours = calculateAverageHoursPerTask(allEntries);
+      const groupedTasks = groupTasksByDescription(allEntries);
+      const teamDist = calculateTeamDistribution(allEntries);
+      const evolution = calculateConsumptionEvolution(allEntries);
       const cumulative = calculateCumulativeEvolution(evolution);
 
       const updatedReport: ClientReport = {
@@ -68,13 +199,17 @@ export default function EditReportDialog({
         price,
         startDate,
         isActive,
+        configs, // Usar las configuraciones actualizadas
+        reportTags,
+        activeTag,
+        entries: allEntries, // Actualizar con las nuevas entradas
         summary: {
           totalHoursConsumed: totalConsumed,
           totalHoursAvailable: totalHours,
           consumptionPercentage: totalHours > 0 ? (totalConsumed / totalHours) * 100 : 0,
           consumptionSpeed: speed,
           estimatedDaysRemaining: (totalHours > totalConsumed && speed > 0) ? Math.ceil((totalHours - totalConsumed) / speed) : 0,
-          completedTasks: report.entries.length, // Total de entradas de tiempo
+          completedTasks: groupedTasks.length,
           averageHoursPerTask: avgHours,
           tasksByDescription: groupedTasks,
           teamDistribution: teamDist,
@@ -84,11 +219,14 @@ export default function EditReportDialog({
       };
 
       await saveReport(updatedReport);
-      alert('✓ Reporte recalculado y actualizado exitosamente!');
+      alert('✓ Reporte recalculado y actualizado exitosamente con los nuevos filtros!');
       onUpdated();
       onClose();
     } catch (error) {
       alert('Error al recalcular el reporte: ' + (error instanceof Error ? error.message : 'Error desconocido'));
+      console.error('Error al recalcular:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -155,12 +293,107 @@ export default function EditReportDialog({
             </label>
           </div>
 
-          {/* Información de configuración de Toggl */}
+          {/* Gestión de Tags del Reporte */}
+          <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+            <p className="text-sm font-medium text-green-900 mb-3">Tags del Reporte</p>
+            <ReportTagsManager
+              reportTags={reportTags}
+              activeTag={activeTag}
+              availableTags={availableTags}
+              onTagsChange={setReportTags}
+              onActiveTagChange={setActiveTag}
+            />
+          </div>
+
+          {/* Configuraciones de Toggl - Editable */}
           <div className="p-4 bg-blue-50 rounded-lg">
-            <p className="text-sm font-medium text-blue-900 mb-2">Configuraciones de Toggl</p>
-            <p className="text-xs text-blue-700">
-              {report.configs.length} configuración(es) activa(s). Los filtros de Toggl no se pueden editar aquí.
-              Para modificar los filtros, deberás crear un nuevo reporte.
+            <div className="flex justify-between items-center mb-3">
+              <p className="text-sm font-medium text-blue-900">Configuraciones de Toggl</p>
+              <button
+                onClick={addConfig}
+                className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+              >
+                + Añadir Configuración
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {configs.map((config) => {
+                const apiKeyInfo = apiKeys.find(k => k.id === config.selectedApiKey);
+                const data = availableData[config.selectedApiKey] || { clients: [], projects: [], tags: [] };
+                
+                const availableClients = data.clients || [];
+                const availableProjects = data.projects.filter(p => 
+                  !config.selectedClient || p.cid === Number(config.selectedClient)
+                ) || [];
+                const availableTags = data.tags || [];
+
+                return (
+                  <div key={config.id} className="p-3 bg-white rounded border border-blue-200">
+                    <div className="flex justify-between items-start mb-3">
+                      <p className="text-xs font-medium text-blue-900">
+                        Configuración {configs.indexOf(config) + 1}
+                      </p>
+                      {configs.length > 1 && (
+                        <button
+                          onClick={() => removeConfig(config.id)}
+                          className="text-xs text-red-600 hover:text-red-800"
+                        >
+                          Eliminar
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium mb-1">API Key</label>
+                        <select
+                          value={config.selectedApiKey}
+                          onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedClient: undefined, selectedProject: undefined, selectedTags: undefined })}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                        >
+                          {apiKeys.map(key => (
+                            <option key={key.id} value={key.id}>{key.fullname}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium mb-1">Cliente (opcional)</label>
+                        <select
+                          value={config.selectedClient || ''}
+                          onChange={(e) => updateConfig(config.id, { selectedClient: e.target.value || undefined, selectedProject: undefined })}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                        >
+                          <option value="">Todos los clientes</option>
+                          {availableClients.map(client => (
+                            <option key={client.id} value={client.id}>{client.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-medium mb-1">Proyecto (opcional)</label>
+                        <select
+                          value={config.selectedProject || ''}
+                          onChange={(e) => updateConfig(config.id, { selectedProject: e.target.value || undefined })}
+                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                        >
+                          <option value="">Todos los proyectos</option>
+                          {availableProjects.map(project => (
+                            <option key={project.id} value={project.id}>{project.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            
+            <p className="text-xs text-blue-600 mt-3">
+              ⚠️ Nota: Al modificar los filtros y guardar, las entradas del reporte se actualizarán automáticamente en la próxima actualización (cada 30 min) o al recargar el reporte.
             </p>
           </div>
 
@@ -181,9 +414,10 @@ export default function EditReportDialog({
         <div className="mt-6 flex justify-between">
           <button
             onClick={handleRecalculate}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+            disabled={loading}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            🔄 Recalcular Estadísticas
+            {loading ? '🔄 Recalculando...' : '🔄 Recalcular Estadísticas'}
           </button>
           <div className="flex gap-3">
             <button
@@ -194,9 +428,10 @@ export default function EditReportDialog({
             </button>
             <button
               onClick={handleSave}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              disabled={loading}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Guardar Cambios
+              {loading ? 'Guardando...' : 'Guardar Cambios'}
             </button>
           </div>
         </div>

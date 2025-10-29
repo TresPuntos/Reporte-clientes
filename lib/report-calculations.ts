@@ -10,23 +10,34 @@ export function calculateConsumptionPercentage(consumed: number, total: number):
 export function calculateConsumptionSpeed(entries: TimeEntry[]): number {
   if (entries.length === 0) return 0;
   
-  // Calcular usando todos los datos históricos con ponderación por tiempo
-  const sortedEntries = entries.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   
-  if (sortedEntries.length === 0) return 0;
+  // Filtrar entradas de los últimos 7 días
+  const recentEntries = entries.filter(entry => {
+    const entryDate = parseISO(entry.start);
+    return entryDate >= sevenDaysAgo;
+  });
   
-  const totalHours = entries.reduce((sum, entry) => sum + entry.duration, 0) / 3600;
+  if (recentEntries.length === 0) {
+    // Si no hay entradas recientes, usar promedio histórico como fallback
+    const sortedEntries = entries.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+    if (sortedEntries.length === 0) return 0;
+    
+    const totalHours = entries.reduce((sum, entry) => sum + entry.duration, 0) / 3600;
+    const firstEntry = sortedEntries[0];
+    const startDate = parseISO(firstEntry.start);
+    const diffTime = now.getTime() - startDate.getTime();
+    const diffDays = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+    
+    return totalHours / diffDays;
+  }
   
-  // Calcular días transcurridos desde la primera entrada hasta ahora
-  const firstEntry = sortedEntries[0];
-  const lastEntry = sortedEntries[sortedEntries.length - 1];
-  const startDate = parseISO(firstEntry.start);
-  const endDate = new Date();
+  // Calcular horas consumidas en los últimos 7 días
+  const totalHours = recentEntries.reduce((sum, entry) => sum + entry.duration, 0) / 3600;
   
-  const diffTime = endDate.getTime() - startDate.getTime();
-  const diffDays = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-  
-  return totalHours / diffDays; // Horas por día promedio desde el inicio
+  // Retornar horas por día promedio de los últimos 7 días
+  return totalHours / 7;
 }
 
 export function calculateEstimatedDaysRemaining(

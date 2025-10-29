@@ -17,6 +17,8 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import ReportTagsManager from '@/components/report-tags-manager';
+import type { ReportTag } from '@/lib/report-types';
 
 export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo[] }) {
   const [reportName, setReportName] = useState('');
@@ -29,6 +31,9 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [newReportUrl, setNewReportUrl] = useState<string | null>(null);
+  const [reportTags, setReportTags] = useState<ReportTag[]>([]);
+  const [activeTag, setActiveTag] = useState<string | undefined>(undefined);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
 
   // Set default date to the earliest allowed date by Toggl API
   useEffect(() => {
@@ -36,6 +41,28 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
     const togglMinDate = '2025-07-27';
     setStartDate(togglMinDate);
   }, []);
+
+  // Cargar tags disponibles de todas las API keys
+  useEffect(() => {
+    const loadAvailableTags = async () => {
+      const allTags = new Set<string>();
+      for (const apiKey of apiKeys) {
+        try {
+          const me = await getMe(apiKey.key);
+          (me.tags || []).forEach((tag: any) => {
+            allTags.add(tag.name);
+          });
+        } catch (error) {
+          console.error(`Error loading tags for ${apiKey.fullname}:`, error);
+        }
+      }
+      setAvailableTags(Array.from(allTags));
+    };
+
+    if (apiKeys.length > 0) {
+      loadAvailableTags();
+    }
+  }, [apiKeys]);
 
   const addConfig = () => {
     if (apiKeys.length === 0) {
@@ -175,8 +202,13 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
         if (config.selectedProject) {
           filtered = filtered.filter(entry => entry.pid === Number(config.selectedProject));
         }
-        if (config.selectedTag) {
-          filtered = filtered.filter(entry => entry.tags && entry.tags.includes(config.selectedTag!));
+        // Filtrar por tags del reporte si están configurados
+        // Solo incluir entradas que tengan alguno de los tags del reporte
+        if (reportTags.length > 0) {
+          const reportTagNames = reportTags.map(t => t.name);
+          filtered = filtered.filter(entry => 
+            entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
+          );
         }
 
         const enriched = filtered.map(entry => {
@@ -228,6 +260,8 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
         publicUrl: generatePublicUrl(),
         isActive: true,
         configs,
+        reportTags,
+        activeTag,
         entries: allEntries,
         summary: {
           totalHoursConsumed: totalConsumed,
@@ -254,6 +288,8 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
       
       setReportName('');
       setConfigs([]);
+      setReportTags([]);
+      setActiveTag(undefined);
       
       setTimeout(() => {
         setSuccess(false);
@@ -306,6 +342,18 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
         </div>
       </div>
 
+      {/* Gestión de Tags del Reporte */}
+      <Card className="mb-6 p-4">
+        <h3 className="text-lg font-semibold mb-4">Tags del Reporte</h3>
+        <ReportTagsManager
+          reportTags={reportTags}
+          activeTag={activeTag}
+          availableTags={availableTags}
+          onTagsChange={setReportTags}
+          onActiveTagChange={setActiveTag}
+        />
+      </Card>
+
       <div className="mb-6">
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-lg font-semibold">Configuraciones de Toggl</h3>
@@ -324,7 +372,7 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
                     <label className="block text-sm font-medium mb-1">Cuenta</label>
                     <select
                       value={config.selectedApiKey}
-                      onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedClient: '', selectedProject: '', selectedTag: '' })}
+                      onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedClient: '', selectedProject: '', selectedTags: undefined })}
                       className="w-full px-3 py-2 rounded-md border border-input bg-background"
                     >
                       {apiKeys.map(key => (
@@ -355,19 +403,6 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
                       <option value="">Todos</option>
                       {(apiKeyInfo?.projects || []).filter(p => !config.selectedClient || p.cid === Number(config.selectedClient)).map(p => (
                         <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Tag</label>
-                    <select
-                      value={config.selectedTag || ''}
-                      onChange={(e) => updateConfig(config.id, { selectedTag: e.target.value })}
-                      className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                    >
-                      <option value="">Todas</option>
-                      {(apiKeyInfo?.tags || []).map(t => (
-                        <option key={t.id} value={t.name}>{t.name}</option>
                       ))}
                     </select>
                   </div>
