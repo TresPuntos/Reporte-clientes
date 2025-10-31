@@ -30,9 +30,35 @@ export default function ReportManager() {
   }, []);
 
   const loadReports = async () => {
-    const allReports = await getAllReports();
-    setReports(allReports);
-    setLoading(false);
+    try {
+      const allReports = await getAllReports();
+      setReports(allReports);
+      
+      // Migrar datos de localStorage al servidor si existen y el servidor está vacío
+      if (typeof window !== 'undefined' && allReports.length === 0) {
+        const localData = localStorage.getItem('client_reports');
+        if (localData) {
+          try {
+            const localReports = JSON.parse(localData);
+            if (localReports.length > 0) {
+              // Migrar cada reporte al servidor
+              for (const report of localReports) {
+                await saveReport(report);
+              }
+              // Recargar después de la migración
+              const migratedReports = await getAllReports();
+              setReports(migratedReports);
+            }
+          } catch (error) {
+            console.error('Error migrating reports:', error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading reports:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const loadApiKeys = () => {

@@ -11,9 +11,25 @@ export default function ClientReportPage({ params }: { params: Promise<{ publicU
 
   useEffect(() => {
     async function loadReport() {
-      const found = await getReportByPublicUrl(publicUrl);
-      setReport(found);
-      setLoading(false);
+      try {
+        // Intentar obtener del servidor primero
+        const response = await fetch(`/api/reports/${publicUrl}`);
+        if (response.ok) {
+          const serverReport = await response.json();
+          setReport(serverReport);
+        } else {
+          // Fallback a la función local
+          const found = await getReportByPublicUrl(publicUrl);
+          setReport(found);
+        }
+      } catch (error) {
+        console.error('Error loading report:', error);
+        // Fallback a la función local
+        const found = await getReportByPublicUrl(publicUrl);
+        setReport(found);
+      } finally {
+        setLoading(false);
+      }
     }
     loadReport();
   }, [publicUrl]);

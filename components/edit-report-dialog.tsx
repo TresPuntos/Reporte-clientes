@@ -70,6 +70,16 @@ export default function EditReportDialog({
     loadAvailableData();
   }, [apiKeys]);
 
+  // Asegurarse de que los tags se inicializan correctamente cuando cambia el reporte
+  useEffect(() => {
+    if (report.reportTags) {
+      setReportTags(report.reportTags);
+    }
+    if (report.activeTag !== undefined) {
+      setActiveTag(report.activeTag);
+    }
+  }, [report.id]); // Solo cuando cambia el ID del reporte
+
   const updateConfig = (configId: string, updates: Partial<ReportConfig>) => {
     setConfigs(prev => prev.map(config => 
       config.id === configId ? { ...config, ...updates } : config
@@ -140,8 +150,13 @@ export default function EditReportDialog({
         const apiKeyInfo = storedApiKeys.find((k: any) => k.id === config.selectedApiKey);
         if (!apiKeyInfo) continue;
 
-        const workspaceId = apiKeyInfo.workspaces[0]?.id;
+        // Usar el workspace seleccionado en la configuración, o el primero si no está especificado
+        const workspaceId = config.selectedWorkspace 
+          ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+          : apiKeyInfo.workspaces[0]?.id;
         if (!workspaceId) continue;
+        
+        console.log(`[Edit] Usando workspace ${workspaceId} para ${apiKeyInfo.fullname}`);
 
         const entries = await getTimeEntries(apiKeyInfo.key, startDate, currentDate, workspaceId);
 
@@ -349,7 +364,7 @@ export default function EditReportDialog({
                         <label className="block text-xs font-medium mb-1">API Key</label>
                         <select
                           value={config.selectedApiKey}
-                          onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedClient: undefined, selectedProject: undefined, selectedTags: undefined })}
+                          onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedWorkspace: undefined, selectedClient: undefined, selectedProject: undefined, selectedTags: undefined })}
                           className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
                         >
                           {apiKeys.map(key => (
@@ -357,6 +372,26 @@ export default function EditReportDialog({
                           ))}
                         </select>
                       </div>
+
+                      {apiKeyInfo && apiKeyInfo.workspaces && apiKeyInfo.workspaces.length > 1 && (
+                        <div>
+                          <label className="block text-xs font-medium mb-1">Workspace</label>
+                          <select
+                            value={config.selectedWorkspace || apiKeyInfo.workspaces[0]?.id || ''}
+                            onChange={(e) => updateConfig(config.id, { selectedWorkspace: e.target.value ? Number(e.target.value) : undefined })}
+                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                          >
+                            {apiKeyInfo.workspaces.map((workspace: any) => (
+                              <option key={workspace.id} value={workspace.id}>
+                                {workspace.name || `Workspace ${workspace.id}`}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {config.selectedWorkspace ? `✓ Seleccionado: ${apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.name || config.selectedWorkspace}` : `⚠️ Por defecto usa: ${apiKeyInfo.workspaces[0]?.name || apiKeyInfo.workspaces[0]?.id}`}
+                          </p>
+                        </div>
+                      )}
 
                       <div>
                         <label className="block text-xs font-medium mb-1">Cliente (opcional)</label>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { ClientReport } from '@/lib/report-types';
 import { saveReport, getReportByPublicUrl, getAllReports } from '@/lib/report-types';
 import {
@@ -17,6 +17,9 @@ import {
   Line,
   BarChart,
   Bar,
+  PieChart,
+  Pie,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -33,7 +36,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Activity, TrendingUp, Clock, CheckCircle, Calendar, Users, Package, Filter, X } from 'lucide-react';
+import { Activity, TrendingUp, Clock, CheckCircle, Calendar, Users, Package, Filter, X, ArrowRight, Rocket, ShieldCheck, MessageSquare, Send, Zap, ChevronDown } from 'lucide-react';
+import { getTogglMinDateSync } from '@/lib/toggl-date-utils';
+import { toast } from '@/lib/toast';
 
 export default function ClientReportDashboard({ report: initialReport }: { report: ClientReport }) {
   const [report, setReport] = useState<ClientReport>(initialReport);
@@ -47,6 +52,11 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [dateRangeStart, setDateRangeStart] = useState<string>('');
   const [dateRangeEnd, setDateRangeEnd] = useState<string>('');
+  
+  // Time period selector state
+  const [timePeriod, setTimePeriod] = useState<string>('año-actual');
+  const [customDateStart, setCustomDateStart] = useState<string>('');
+  const [customDateEnd, setCustomDateEnd] = useState<string>('');
 
   // Auto-refresh cada 30 minutos  
   useEffect(() => {
@@ -60,38 +70,123 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
         // Separar entradas actuales del reporte
         const historicalEntries = report.entries.filter((e: any) => e.id < 0);
         const existingTogglEntries = report.entries.filter((e: any) => e.id >= 0);
-        const existingTogglMap = new Map(
-          existingTogglEntries.map((entry: any) => [entry.id, entry])
-        );
+        
+        // Determinar qué workspaces se están usando en las configuraciones actuales
+        const activeWorkspaceIds = new Set<number>();
+        for (const config of report.configs) {
+          const apiKeyInfo = apiKeys.find((k: any) => k.id === config.selectedApiKey);
+          if (apiKeyInfo) {
+            const workspaceId = config.selectedWorkspace 
+              ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+              : apiKeyInfo.workspaces[0]?.id;
+            if (workspaceId) {
+              activeWorkspaceIds.add(workspaceId);
+            }
+          }
+        }
+        
+        console.log(`[Auto-refresh] Workspaces activos en configuraciones:`, Array.from(activeWorkspaceIds));
+        
+        // Crear un mapa de entradas existentes, filtrando por workspace activo
+        const existingTogglMap = new Map<number, any>();
+        let discardedCount = 0;
+        
+        for (const entry of existingTogglEntries) {
+          // Solo incluir si pertenece a un workspace activo o si no tiene workspace ID (compatibilidad)
+          if (!entry.wid || activeWorkspaceIds.has(entry.wid)) {
+            existingTogglMap.set(entry.id, entry);
+          } else {
+            discardedCount++;
+            console.log(`[Auto-refresh] 🗑️ Descartando entrada existente: ${entry.description?.substring(0, 50)} (workspace ${entry.wid} no está activo)`);
+          }
+        }
+        
+        if (discardedCount > 0) {
+          console.log(`[Auto-refresh] Se descartaron ${discardedCount} entradas existentes que no pertenecen a workspaces activos`);
+        }
         
         const currentDate = new Date().toISOString().split('T')[0];
         const freshTogglEntries: any[] = [];
         
         for (const config of report.configs) {
+          try {
           const apiKeyInfo = apiKeys.find((k: any) => k.id === config.selectedApiKey);
-          if (!apiKeyInfo) continue;
+            if (!apiKeyInfo) {
+              console.warn(`[Auto-refresh] API key no encontrada para config: ${config.id}`);
+              continue;
+            }
 
-          const workspaceId = apiKeyInfo.workspaces[0]?.id;
-          if (!workspaceId) continue;
+            // Log todos los workspaces disponibles
+            console.log(`[Auto-refresh][${apiKeyInfo.fullname}] Workspaces disponibles:`, apiKeyInfo.workspaces.map((w: any) => ({ id: w.id, name: w.name })));
+            
+            // Usar el workspace seleccionado en la configuración, o el primero si no está especificado
+            const workspaceId = config.selectedWorkspace 
+              ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+              : apiKeyInfo.workspaces[0]?.id;
+              
+            if (!workspaceId) {
+              console.warn(`[Auto-refresh] Workspace ID no encontrado para ${apiKeyInfo.fullname}. Workspace seleccionado: ${config.selectedWorkspace}, workspaces disponibles: ${apiKeyInfo.workspaces.map((w: any) => w.id).join(', ')}`);
+              continue;
+            }
+            
+            const workspaceName = apiKeyInfo.workspaces.find((w: any) => w.id === workspaceId)?.name || 'sin nombre';
+            console.log(`[Auto-refresh][${apiKeyInfo.fullname}] ✅ Usando workspace: ${workspaceId} (${workspaceName})${config.selectedWorkspace ? ' [seleccionado en config]' : ' [por defecto, primero]'}`);
 
-          const entries = await getTimeEntries(apiKeyInfo.key, report.startDate, currentDate, workspaceId);
+            // Asegurar que la fecha de inicio no sea anterior a la fecha mínima de Toggl
+            const togglMinDate = getTogglMinDateSync();
+            const effectiveStartDate = report.startDate < togglMinDate ? togglMinDate : report.startDate;
+            
+            if (report.startDate < togglMinDate) {
+              console.warn(`[Auto-refresh][${apiKeyInfo.fullname}] Fecha de inicio del reporte (${report.startDate}) es anterior a la fecha mínima de Toggl (${togglMinDate}). Usando ${togglMinDate} en su lugar.`);
+            }
+            
+            console.log(`[Auto-refresh][${apiKeyInfo.fullname}] Obteniendo entradas desde ${effectiveStartDate} hasta ${currentDate}...`);
+            const entries = await getTimeEntries(apiKeyInfo.key, effectiveStartDate, currentDate, workspaceId);
+            console.log(`[Auto-refresh][${apiKeyInfo.fullname}] Total entradas obtenidas: ${entries.length}`);
 
           let filtered = entries;
+            
           if (config.selectedClient) {
+              const beforeClientFilter = filtered.length;
             filtered = filtered.filter((entry: any) => {
               const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
               return project && project.cid === Number(config.selectedClient);
             });
+              console.log(`[Auto-refresh][${apiKeyInfo.fullname}] Después de filtrar por cliente: ${filtered.length} de ${beforeClientFilter}`);
           }
+            
           if (config.selectedProject) {
+              const beforeProjectFilter = filtered.length;
             filtered = filtered.filter((entry: any) => entry.pid === Number(config.selectedProject));
-          }
-          // Filtrar por tags del reporte si están configurados
-          if (report.reportTags && report.reportTags.length > 0) {
-            const reportTagNames = report.reportTags.map(t => t.name);
-            filtered = filtered.filter((entry: any) => 
-              entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
-            );
+              console.log(`[Auto-refresh][${apiKeyInfo.fullname}] Después de filtrar por proyecto: ${filtered.length} de ${beforeProjectFilter}`);
+            }
+            
+            // Filtrar por tags del reporte si están configurados
+            if (report.reportTags && report.reportTags.length > 0) {
+              const reportTagNames = report.reportTags.map(t => t.name);
+              const beforeTagFilter = filtered.length;
+              
+              // Log todas las entradas antes del filtro para debug
+              console.log(`[Auto-refresh][${apiKeyInfo.fullname}] Entradas antes de filtrar por tags (${reportTagNames.join(', ')}):`, 
+                filtered.map((e: any) => ({
+                  desc: e.description,
+                  tags: e.tags || [],
+                  hasTag: e.tags && e.tags.some((tag: string) => reportTagNames.includes(tag))
+                }))
+              );
+              
+              filtered = filtered.filter((entry: any) => {
+                const hasMatchingTag = entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag));
+                if (!hasMatchingTag) {
+                  console.log(`[Auto-refresh][${apiKeyInfo.fullname}] ❌ Entrada rechazada por tags: "${entry.description}"`, {
+                    tags: entry.tags || [],
+                    buscaTags: reportTagNames,
+                    fecha: entry.start
+                  });
+                }
+                return hasMatchingTag;
+              });
+              console.log(`[Auto-refresh][${apiKeyInfo.fullname}] ✅ Después de filtrar por tags del reporte (${reportTagNames.join(', ')}): ${filtered.length} de ${beforeTagFilter}`);
           }
 
           const enriched = filtered.map((entry: any) => {
@@ -106,8 +201,23 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
             };
           });
 
+            console.log(`[Auto-refresh][${apiKeyInfo.fullname}] Total entradas enriquecidas añadidas: ${enriched.length}`);
           freshTogglEntries.push(...enriched);
+          } catch (error) {
+            console.error(`[Auto-refresh] Error procesando config para ${config.selectedApiKey}:`, error);
+            // Continuar con la siguiente configuración
+          }
         }
+        
+        console.log(`[Auto-refresh] Total entradas de todas las configuraciones: ${freshTogglEntries.length}`);
+        
+        // Debug: Contar entradas por usuario
+        const entriesByUser = freshTogglEntries.reduce((acc: any, entry: any) => {
+          const user = entry.user_name || 'Desconocido';
+          acc[user] = (acc[user] || 0) + 1;
+          return acc;
+        }, {});
+        console.log('[Auto-refresh] Entradas por usuario:', entriesByUser);
 
         // Preservar entradas que no han cambiado
         const preservedTogglEntries = freshTogglEntries.map((freshEntry: any) => {
@@ -117,8 +227,18 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
           }
           return freshEntry;
         });
+        
+        console.log(`[Auto-refresh] Total entradas preservadas/actualizadas: ${preservedTogglEntries.length}`);
+        const preservedByUser = preservedTogglEntries.reduce((acc: any, entry: any) => {
+          const user = entry.user_name || 'Desconocido';
+          acc[user] = (acc[user] || 0) + 1;
+          return acc;
+        }, {});
+        console.log('[Auto-refresh] Entradas preservadas por usuario:', preservedByUser);
 
         const allEntries = [...historicalEntries, ...preservedTogglEntries];
+        
+        console.log(`[Auto-refresh] Total entradas finales: ${allEntries.length} (${historicalEntries.length} históricas + ${preservedTogglEntries.length} de Toggl)`);
 
         const totalConsumed = allEntries.reduce((sum: number, e: any) => sum + e.duration, 0) / 3600;
         const speed = calculateConsumptionSpeed(allEntries);
@@ -171,6 +291,287 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
       ...prev,
       [description]: !prev[description]
     }));
+  };
+
+  // Helper: Formatear fecha en español (DD Mon YYYY)
+  const formatDateES = (date: Date): string => {
+    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    const day = date.getDate();
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+    return `${day} ${month} ${year}`;
+  };
+
+  // Helper: Obtener fecha de última actualización
+  const getLastUpdateTime = (): string => {
+    if (report.lastUpdated) {
+      const date = new Date(report.lastUpdated);
+      return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    }
+    const now = new Date();
+    return now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  };
+
+  // Helper: Obtener fecha de última actualización completa
+  const getLastUpdateDate = (): string => {
+    if (report.lastUpdated) {
+      const date = new Date(report.lastUpdated);
+      const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+      return `${date.getDate()} de ${months[date.getMonth()]} de ${date.getFullYear()}`;
+    }
+    const now = new Date();
+    const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    return `${now.getDate()} de ${months[now.getMonth()]} de ${now.getFullYear()}`;
+  };
+
+  // Helper: Calcular velocidad de consumo semanal (promedio de últimas 4 semanas)
+  const calculateWeeklySpeed = (): number => {
+    const now = new Date();
+    const fourWeeksAgo = new Date(now.getTime() - 4 * 7 * 24 * 60 * 60 * 1000);
+    
+    const recentEntries = report.entries.filter(entry => {
+      const entryDate = new Date(entry.start);
+      return entryDate >= fourWeeksAgo;
+    });
+    
+    const totalHours = recentEntries.reduce((sum, entry) => sum + entry.duration, 0) / 3600;
+    return totalHours / 4; // Promedio por semana
+  };
+
+  // Helper: Calcular estimación de agotamiento en semanas
+  const calculateWeeksRemaining = (): number => {
+    const weeklySpeed = calculateWeeklySpeed();
+    const remainingHours = report.summary.totalHoursAvailable - report.summary.totalHoursConsumed;
+    if (weeklySpeed <= 0) return 0;
+    return remainingHours / weeklySpeed;
+  };
+
+  // Helper: Calcular rango de fechas según período seleccionado
+  const getDateRange = () => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    
+    switch (timePeriod) {
+      case 'año-actual':
+        return {
+          start: new Date(currentYear, 0, 1),
+          end: now,
+        };
+      case 'año-anterior':
+        return {
+          start: new Date(currentYear - 1, 0, 1),
+          end: new Date(currentYear - 1, 11, 31),
+        };
+      case 'ultimos-12-meses':
+        return {
+          start: new Date(now.getFullYear(), now.getMonth() - 11, 1),
+          end: now,
+        };
+      case 'ultimos-7-dias':
+        return {
+          start: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+          end: now,
+        };
+      case 'mes-actual':
+        return {
+          start: new Date(currentYear, currentMonth, 1),
+          end: now,
+        };
+      case 'mes-anterior':
+        const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+        const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+        return {
+          start: new Date(prevYear, prevMonth, 1),
+          end: new Date(prevYear, prevMonth + 1, 0),
+        };
+      case 'trimestre-1':
+        return {
+          start: new Date(currentYear, 0, 1),
+          end: new Date(currentYear, 2, 31),
+        };
+      case 'trimestre-2':
+        return {
+          start: new Date(currentYear, 3, 1),
+          end: new Date(currentYear, 5, 30),
+        };
+      case 'trimestre-3':
+        return {
+          start: new Date(currentYear, 6, 1),
+          end: new Date(currentYear, 8, 30),
+        };
+      case 'trimestre-4':
+        return {
+          start: new Date(currentYear, 9, 1),
+          end: new Date(currentYear, 11, 31),
+        };
+      case 'personalizado':
+        return {
+          start: customDateStart ? new Date(customDateStart) : new Date(currentYear, 0, 1),
+          end: customDateEnd ? new Date(customDateEnd) : now,
+        };
+      default:
+        return {
+          start: new Date(currentYear, 0, 1),
+          end: now,
+        };
+    }
+  };
+
+  // Helper: Obtener distribución mensual para el gráfico de barras
+  const getMonthlyConsumption = () => {
+    const { start, end } = getDateRange();
+    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    
+    // Filtrar entradas por rango de fechas
+    const filteredEntries = report.entries.filter(entry => {
+      const entryDate = new Date(entry.start);
+      return entryDate >= start && entryDate <= end;
+    });
+    
+    // Agrupar por mes
+    const monthlyData: Record<string, number> = {};
+    
+    filteredEntries.forEach(entry => {
+      const date = new Date(entry.start);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      monthlyData[monthKey] = (monthlyData[monthKey] || 0) + entry.duration / 3600;
+    });
+    
+    // Crear array de 12 meses del año del rango seleccionado
+    const startYear = start.getFullYear();
+    const endYear = end.getFullYear();
+    const result: Array<{ month: string; hours: number; monthIndex: number; fullMonth: string }> = [];
+    
+    // Para períodos de un año completo, mostrar todos los meses del año
+    if (timePeriod === 'año-actual' || timePeriod === 'año-anterior') {
+      for (let i = 0; i < 12; i++) {
+        const monthKey = `${startYear}-${String(i + 1).padStart(2, '0')}`;
+        result.push({
+          month: months[i],
+          hours: monthlyData[monthKey] || 0,
+          monthIndex: i,
+          fullMonth: monthKey,
+        });
+      }
+    } else {
+      // Para otros períodos, mostrar solo los meses con datos
+      return Object.entries(monthlyData)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([key, hours]) => {
+          const [year, month] = key.split('-');
+          return {
+            month: months[parseInt(month) - 1],
+            hours: hours,
+            monthIndex: parseInt(month) - 1,
+            fullMonth: key,
+          };
+        });
+    }
+    
+    return result;
+  };
+
+  // Helper: Calcular estadísticas mensuales
+  const getMonthlyStats = () => {
+    const monthlyData = getMonthlyConsumption();
+    const { start, end } = getDateRange();
+    
+    if (monthlyData.length === 0) {
+      return {
+        average: 0,
+        maxMonth: null,
+        trend: 'Estable',
+        totalHours: 0,
+      };
+    }
+    
+    // Filtrar entradas por rango de fechas para calcular totales
+    const filteredEntries = report.entries.filter(entry => {
+      const entryDate = new Date(entry.start);
+      return entryDate >= start && entryDate <= end;
+    });
+    
+    const totalHours = filteredEntries.reduce((sum, entry) => sum + entry.duration, 0) / 3600;
+    const numMonths = monthlyData.length;
+    const average = numMonths > 0 ? totalHours / numMonths : 0;
+    
+    const maxMonth = monthlyData.reduce((max, curr) => 
+      curr.hours > max.hours ? curr : max, monthlyData[0]
+    );
+    
+    // Determinar tendencia comparando últimos 2 meses
+    let trend = 'Estable';
+    if (monthlyData.length >= 2) {
+      const lastTwo = monthlyData.slice(-2);
+      const diff = lastTwo[1].hours - lastTwo[0].hours;
+      const avgHours = monthlyData.reduce((sum, m) => sum + m.hours, 0) / monthlyData.length;
+      if (diff > avgHours * 0.1) trend = 'Creciente';
+      else if (diff < -avgHours * 0.1) trend = 'Decreciente';
+    }
+    
+    return {
+      average,
+      maxMonth,
+      trend,
+      totalHours,
+    };
+  };
+
+  // Helper: Obtener distribución por descripción para donut chart
+  const getDescriptionDistribution = () => {
+    return report.summary.tasksByDescription.map(task => ({
+      name: task.description,
+      value: task.totalHours,
+      percentage: ((task.totalHours / report.summary.totalHoursConsumed) * 100).toFixed(1),
+    }));
+  };
+
+  // Helper: Obtener últimas 8 tareas (entradas más recientes)
+  const getLatestTasks = () => {
+    return report.entries
+      .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime())
+      .slice(0, 8);
+  };
+
+  // Helper: Asignar color a cada proyecto (estilo pill tag)
+  const projectColorMap = useMemo(() => {
+    const uniqueProjects = Array.from(new Set(report.entries.map(e => e.project_name || 'Sin proyecto')));
+    const colors = [
+      '#5CFFBE', // Verde menta
+      '#7B68EE', // Púrpura
+      '#FF6B9D', // Rosa
+      '#FFD93D', // Amarillo
+      '#6BCF7F', // Verde suave (de la misma gama)
+      '#A78BFA', // Púrpura claro (de la misma gama)
+      '#F472B6', // Rosa claro (de la misma gama)
+      '#FCD34D', // Amarillo claro (de la misma gama)
+    ];
+    
+    const colorMap: Record<string, string> = {};
+    uniqueProjects.forEach((project, idx) => {
+      colorMap[project] = colors[idx % colors.length];
+    });
+    
+    return colorMap;
+  }, [report.entries]);
+
+  // Helper: Convertir hex a RGBA con opacidad
+  const hexToRgba = (hex: string, opacity: number): string => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  };
+
+  const getProjectColor = (projectName: string): { fill: string; stroke: string; base: string } => {
+    const baseColor = projectColorMap[projectName] || '#5CFFBE';
+    // Fill: 20% opacidad, Stroke: 30% opacidad
+    return {
+      fill: hexToRgba(baseColor, 0.2), // 20%
+      stroke: hexToRgba(baseColor, 0.3), // 30%
+      base: baseColor,
+    };
   };
 
   // Calcular consumo por proyectos
@@ -255,7 +656,7 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
       const stored = localStorage.getItem('toggl_api_keys');
       if (!stored) {
         if (!silent) {
-          alert('No se pueden actualizar los datos. Vuelve a abrir el reporte desde el panel de gestión.');
+          toast.error('No se pueden actualizar los datos. Vuelve a abrir el reporte desde el panel de gestión.');
         }
         setIsUpdating(false);
         return;
@@ -267,40 +668,133 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
       const historicalEntries = report.entries.filter((e: any) => e.id < 0); // IDs negativos = CSV
       const existingTogglEntries = report.entries.filter((e: any) => e.id >= 0); // IDs positivos = Toggl
       
+      // Determinar qué workspaces y API keys se están usando en las configuraciones actuales
+      const activeWorkspaceIds = new Set<number>();
+      const activeApiKeyIds = new Set<string>();
+      for (const config of report.configs) {
+        const apiKeyInfo = apiKeys.find((k: any) => k.id === config.selectedApiKey);
+        if (apiKeyInfo) {
+          activeApiKeyIds.add(config.selectedApiKey);
+          const workspaceId = config.selectedWorkspace 
+            ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+            : apiKeyInfo.workspaces[0]?.id;
+          if (workspaceId) {
+            activeWorkspaceIds.add(workspaceId);
+          }
+        }
+      }
+      
+      console.log(`Workspaces activos en configuraciones:`, Array.from(activeWorkspaceIds));
+      console.log(`API keys activas en configuraciones:`, Array.from(activeApiKeyIds));
+      
       // Crear un mapa de entradas existentes de Toggl por ID para comparar
-      const existingTogglMap = new Map(
-        existingTogglEntries.map((entry: any) => [entry.id, entry])
-      );
+      // Solo considerar entradas que pertenecen a workspaces activos
+      const existingTogglMap = new Map<number, any>();
+      let discardedCount = 0;
+      
+      for (const entry of existingTogglEntries) {
+        // Solo incluir en el mapa si pertenece a un workspace activo
+        // O si no tenemos el workspace ID guardado, mantenerla (compatibilidad con datos antiguos)
+        if (!entry.wid || activeWorkspaceIds.has(entry.wid)) {
+          existingTogglMap.set(entry.id, entry);
+        } else {
+          discardedCount++;
+          console.log(`🗑️ Descartando entrada existente: ${entry.description?.substring(0, 50)} (workspace ${entry.wid} no está activo)`);
+        }
+      }
+      
+      if (discardedCount > 0) {
+        console.log(`Se descartaron ${discardedCount} entradas existentes que no pertenecen a workspaces activos`);
+      }
       
       // Obtener datos ACTUALIZADOS de Toggl
       const currentDate = new Date().toISOString().split('T')[0];
       const freshTogglEntries: any[] = [];
       
       for (const config of report.configs) {
+        try {
         const apiKeyInfo = apiKeys.find((k: any) => k.id === config.selectedApiKey);
-        if (!apiKeyInfo) continue;
+          if (!apiKeyInfo) {
+            console.warn(`API key no encontrada para config: ${config.id}`);
+            continue;
+          }
 
-        const workspaceId = apiKeyInfo.workspaces[0]?.id;
-        if (!workspaceId) continue;
+          // Log todos los workspaces disponibles
+          console.log(`[${apiKeyInfo.fullname}] Workspaces disponibles:`, apiKeyInfo.workspaces.map((w: any) => ({ id: w.id, name: w.name })));
+          
+          // Usar el workspace seleccionado en la configuración, o el primero si no está especificado
+          const workspaceId = config.selectedWorkspace 
+            ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+            : apiKeyInfo.workspaces[0]?.id;
+            
+          if (!workspaceId) {
+            console.warn(`Workspace ID no encontrado para ${apiKeyInfo.fullname}. Workspace seleccionado: ${config.selectedWorkspace}, workspaces disponibles: ${apiKeyInfo.workspaces.map((w: any) => w.id).join(', ')}`);
+            continue;
+          }
+          
+          const workspaceName = apiKeyInfo.workspaces.find((w: any) => w.id === workspaceId)?.name || 'sin nombre';
+          console.log(`[${apiKeyInfo.fullname}] ✅ Usando workspace: ${workspaceId} (${workspaceName})${config.selectedWorkspace ? ' [seleccionado en config]' : ' [por defecto, primero]'}`);
 
-        const entries = await getTimeEntries(apiKeyInfo.key, report.startDate, currentDate, workspaceId);
+          // Asegurar que la fecha de inicio no sea anterior a la fecha mínima de Toggl
+          const togglMinDate = getTogglMinDateSync();
+          const effectiveStartDate = report.startDate < togglMinDate ? togglMinDate : report.startDate;
+          
+          if (report.startDate < togglMinDate) {
+            console.warn(`[${apiKeyInfo.fullname}] Fecha de inicio del reporte (${report.startDate}) es anterior a la fecha mínima de Toggl (${togglMinDate}). Usando ${togglMinDate} en su lugar.`);
+          }
+          
+          console.log(`[${apiKeyInfo.fullname}] Obteniendo entradas desde ${effectiveStartDate} hasta ${currentDate}...`);
+          const entries = await getTimeEntries(apiKeyInfo.key, effectiveStartDate, currentDate, workspaceId);
+          console.log(`[${apiKeyInfo.fullname}] Total entradas obtenidas: ${entries.length}`);
 
         let filtered = entries;
+          
+          // Aplicar filtros de configuración
+          const initialCount = filtered.length;
         if (config.selectedClient) {
           filtered = filtered.filter((entry: any) => {
             const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
             return project && project.cid === Number(config.selectedClient);
           });
+            console.log(`[${apiKeyInfo.fullname}] Después de filtrar por cliente (${config.selectedClient}): ${filtered.length} de ${initialCount}`);
         }
+          
         if (config.selectedProject) {
+            const beforeProjectFilter = filtered.length;
           filtered = filtered.filter((entry: any) => entry.pid === Number(config.selectedProject));
-        }
-        // Filtrar por tags del reporte si están configurados
-        if (report.reportTags && report.reportTags.length > 0) {
-          const reportTagNames = report.reportTags.map(t => t.name);
-          filtered = filtered.filter((entry: any) => 
-            entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
-          );
+            console.log(`[${apiKeyInfo.fullname}] Después de filtrar por proyecto (${config.selectedProject}): ${filtered.length} de ${beforeProjectFilter}`);
+          }
+          
+          // Filtrar por tags del reporte si están configurados
+          if (report.reportTags && report.reportTags.length > 0) {
+            const reportTagNames = report.reportTags.map(t => t.name);
+            const beforeTagFilter = filtered.length;
+            
+            // Log todas las entradas antes del filtro para debug
+            console.log(`[${apiKeyInfo.fullname}] Entradas antes de filtrar por tags (${reportTagNames.join(', ')}):`, 
+              filtered.map((e: any) => ({
+                desc: e.description,
+                tags: e.tags || [],
+                hasTag: e.tags && e.tags.some((tag: string) => reportTagNames.includes(tag))
+              }))
+            );
+            
+            filtered = filtered.filter((entry: any) => {
+              const hasMatchingTag = entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag));
+              if (!hasMatchingTag) {
+                // Log todas las entradas que no pasan el filtro de tags
+                console.log(`[${apiKeyInfo.fullname}] ❌ Entrada rechazada por tags: "${entry.description}"`, {
+                  tags: entry.tags || [],
+                  buscaTags: reportTagNames,
+                  fecha: entry.start,
+                  proyecto: entry.pid
+                });
+              }
+              return hasMatchingTag;
+            });
+            console.log(`[${apiKeyInfo.fullname}] ✅ Después de filtrar por tags del reporte (${reportTagNames.join(', ')}): ${filtered.length} de ${beforeTagFilter}`);
+          } else {
+            console.log(`[${apiKeyInfo.fullname}] No hay tags del reporte configurados, no se filtra por tags`);
         }
 
         const enriched = filtered.map((entry: any) => {
@@ -315,31 +809,80 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
           };
         });
 
+          console.log(`[${apiKeyInfo.fullname}] Total entradas enriquecidas añadidas: ${enriched.length}`);
         freshTogglEntries.push(...enriched);
+        } catch (error: any) {
+          const errorMessage = error?.message || 'Error desconocido';
+          console.error(`Error procesando config para ${config.selectedApiKey}:`, error);
+          
+          // Detectar error de límite de API
+          if (errorMessage.includes('hourly limit') || errorMessage.includes('402')) {
+            console.warn(`⚠️ [${config.selectedApiKey}] Error de límite de API - los datos no se pueden actualizar en este momento`);
+            // Continuar sin fallar completamente, pero usar las entradas existentes
+          }
+          
+          // Continuar con la siguiente configuración en lugar de fallar completamente
+        }
       }
+      
+      console.log(`Total entradas de todas las configuraciones: ${freshTogglEntries.length}`);
+      
+      // Debug: Contar entradas por usuario
+      const entriesByUser = freshTogglEntries.reduce((acc: any, entry: any) => {
+        const user = entry.user_name || 'Desconocido';
+        acc[user] = (acc[user] || 0) + 1;
+        return acc;
+      }, {});
+      console.log('Entradas por usuario:', entriesByUser);
 
-      // COMBINAR: Preservar entradas existentes que no han cambiado
+      // COMBINAR: Preservar entradas existentes que no han cambiado y añadir nuevas
+      // Solo preservar entradas que pertenecen a workspaces activos
       const preservedTogglEntries = freshTogglEntries.map((freshEntry: any) => {
         const existingEntry = existingTogglMap.get(freshEntry.id);
         
         // Si existe y no ha cambiado (mismo `at` o `updated`), mantener el original
+        // Pero solo si pertenece a un workspace activo
         if (existingEntry) {
+          const entryWorkspaceId = existingEntry.wid || freshEntry.wid;
+          // Verificar que la entrada pertenece a un workspace activo
+          if (!entryWorkspaceId || activeWorkspaceIds.has(entryWorkspaceId)) {
           // Comparar si la entrada ha sido modificada
-          // Si 'at' (timestamp de última actualización) es igual, no ha cambiado
           if (existingEntry.at === freshEntry.at && existingEntry.duration === freshEntry.duration) {
             return existingEntry; // Mantener la entrada existente (no ha cambiado)
+            }
           }
         }
         
         // Entrada nueva o modificada
         return freshEntry;
       });
+      
+      // Asegurarse de que todas las entradas preservadas pertenecen a workspaces activos
+      const finalPreservedTogglEntries = preservedTogglEntries.filter((entry: any) => {
+        const entryWorkspaceId = entry.wid;
+        if (entryWorkspaceId && !activeWorkspaceIds.has(entryWorkspaceId)) {
+          console.warn(`⚠️ Entrada preservada no pertenece a workspace activo: ${entry.description?.substring(0, 50)} (workspace ${entryWorkspaceId})`);
+          return false;
+        }
+        return true;
+      });
+      
+      // Verificar que se preservaron todas las entradas
+      console.log(`Total entradas preservadas/actualizadas: ${finalPreservedTogglEntries.length}`);
+      const preservedByUser = finalPreservedTogglEntries.reduce((acc: any, entry: any) => {
+        const user = entry.user_name || 'Desconocido';
+        acc[user] = (acc[user] || 0) + 1;
+        return acc;
+      }, {});
+      console.log('Entradas preservadas por usuario:', preservedByUser);
 
       // COMBINAR: Históricos (CSV) + Entradas de Toggl (nuevas/modificadas + preservadas)
       const allEntries = [
         ...historicalEntries, // Mantener siempre los datos del CSV
-        ...preservedTogglEntries // Datos de Toggl (nuevos o actualizados)
+        ...finalPreservedTogglEntries // Datos de Toggl (nuevos o actualizados, solo de workspaces activos)
       ];
+      
+      console.log(`Total entradas finales: ${allEntries.length} (${historicalEntries.length} históricas + ${preservedTogglEntries.length} de Toggl)`);
 
       // Recalcular estadísticas
       const totalConsumed = allEntries.reduce((sum: number, e: any) => sum + e.duration, 0) / 3600;
@@ -378,13 +921,21 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
 
       setReport(updatedReport);
       
+      // Debug temporal: Mostrar resumen de actualización
+      const summary = Object.entries(entriesByUser).map(([user, count]) => `${user}: ${count} entradas`).join(', ');
+      console.log('=== RESUMEN DE ACTUALIZACIÓN ===');
+      console.log('Entradas por usuario:', summary);
+      console.log('Total entradas finales:', allEntries.length);
+      console.log('================================');
+      
       if (!silent) {
-        alert('✓ Reporte actualizado exitosamente');
+        const userSummary = Object.entries(entriesByUser).map(([user, count]) => `${user}: ${count}`).join(' | ');
+        toast.success(`Reporte actualizado exitosamente. ${userSummary}. Total: ${allEntries.length} entradas`);
       }
     } catch (error) {
       console.error('Error al actualizar:', error);
       if (!silent) {
-        alert('Error al actualizar el reporte: ' + (error instanceof Error ? error.message : 'Error desconocido'));
+        toast.error('Error al actualizar el reporte: ' + (error instanceof Error ? error.message : 'Error desconocido'));
       }
     } finally {
       setIsUpdating(false);
@@ -392,419 +943,641 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
   };
 
   return (
-    <div className="min-h-screen bg-background p-6 transition-colors duration-300">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-background transition-colors duration-300">
+      <div className="max-w-[1400px] mx-auto p-6 md:p-8 lg:p-12 space-y-8">
         {/* Theme Toggle */}
-        <div className="absolute top-6 right-6">
+        <div className="absolute top-6 right-6 flex items-center gap-3">
           <ThemeToggle />
         </div>
 
-        {/* Header con navegación moderna */}
-        <Card className="mb-6">
-          <CardHeader>
-            <div className="flex justify-between items-start">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-                    <Package className="w-6 h-6 text-primary-foreground" />
-                  </div>
-                  <CardTitle className="text-3xl">{report.name}</CardTitle>
+        {/* Header Section - Exactamente como la imagen */}
+        <div className="space-y-4">
+          {/* Status Badge */}
+          <div className="flex items-center gap-3">
+            <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+            <Badge variant="outline" className="border-primary/30 text-primary">
+              Actualizado hoy, {getLastUpdateTime()}h
+            </Badge>
                 </div>
-              </div>
-              <div className="text-right">
-                <p className="text-sm mb-1 text-muted-foreground">Total del Paquete</p>
-                <p className="text-3xl font-bold text-foreground">{report.totalHours.toLocaleString('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} horas</p>
-                <p className="text-lg mt-1 text-muted-foreground">
-                  {(report.summary.totalHoursAvailable - report.summary.totalHoursConsumed).toLocaleString('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} disponibles
-                </p>
-                {typeof report.price === 'number' && report.price > 0 ? (
-                  <p className="text-xl font-semibold mt-2 text-foreground">
-                    {report.price.toLocaleString('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </CardHeader>
           
-          <CardContent>
-            <Tabs value={activeView} onValueChange={(v) => setActiveView(v as 'summary' | 'tasks')}>
-              <TabsList className="w-full grid grid-cols-2">
-                <TabsTrigger value="summary">Resumen</TabsTrigger>
-                <TabsTrigger value="tasks">Tareas</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </CardContent>
-        </Card>
+          {/* Title */}
+          <h1 className="text-2xl font-medium text-foreground">Resumen del paquete contratado</h1>
+          
+          {/* Intro Text */}
+          <div className="flex items-center gap-2">
+            <p className="text-muted-foreground max-w-2xl">
+              Aquí puedes ver en qué punto está tu proyecto y cómo avanzamos juntos
+            </p>
+            <Rocket className="w-4 h-4 text-red-500" />
+          </div>
+          
+        </div>
 
         {activeView === 'summary' ? (
           <>
-            {/* KPIs Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-              {/* Consumo del Paquete - Large Card */}
-              <Card className="lg:col-span-2">
-                <CardHeader>
-                  <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                    <Activity className="w-4 h-4" />
-                    Consumo del Paquete
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                
-                {/* Circular Progress */}
-                <div className="flex items-center justify-center mb-8">
-                  <div className="relative w-64 h-64">
-                    <svg className="transform -rotate-90 w-64 h-64">
-                      <circle
-                        cx="128"
-                        cy="128"
-                        r="100"
-                        stroke="hsl(var(--muted))"
-                        strokeWidth="16"
-                        fill="none"
-                      />
-                      <circle
-                        cx="128"
-                        cy="128"
-                        r="100"
-                        stroke="hsl(var(--primary))"
-                        strokeWidth="16"
-                        fill="none"
-                        strokeDasharray={`${2 * Math.PI * 100}`}
-                        strokeDashoffset={`${2 * Math.PI * 100 * (1 - report.summary.consumptionPercentage / 100)}`}
-                      />
-                    </svg>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <span className="text-5xl font-bold text-foreground">
-                        {report.summary.consumptionPercentage.toFixed(1)}%
-                      </span>
-                      <span className="text-sm text-muted-foreground">consumido</span>
+            {/* 4 Bloques en una sola fila: Cliente + 3 KPIs */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {/* Client Card */}
+              <Card className="border-l-4 border-l-primary">
+                <CardContent className="p-6">
+                  <h2 className="text-2xl font-bold text-foreground mb-2">{report.name}</h2>
+                </CardContent>
+              </Card>
+
+              {/* 3 KPIs Horizontales */}
+              {/* Horas contratadas */}
+              <Card>
+                <CardContent className="p-6 relative">
+                  <div className="absolute top-4 right-4 w-10 h-10 rounded-full border border-primary/30 bg-muted flex items-center justify-center">
+                    <Clock className="w-5 h-5 text-foreground" />
                     </div>
+                  <p className="text-sm text-muted-foreground mb-2">Horas contratadas</p>
+                  <p className="text-3xl font-bold text-foreground mb-1">{report.totalHours}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Fecha de inicio: {new Date(report.startDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}
+                  </p>
+                </CardContent>
+              </Card>
+
+              {/* Horas consumidas */}
+              <Card>
+                <CardContent className="p-6 relative">
+                  <div className="absolute top-4 right-4 w-10 h-10 rounded-full border border-primary/30 bg-muted flex items-center justify-center">
+                    <Clock className="w-5 h-5 text-foreground" />
                   </div>
+                  <p className="text-sm text-muted-foreground mb-2">Horas consumidas</p>
+                  <p className="text-3xl font-bold text-foreground mb-1">{report.summary.totalHoursConsumed.toFixed(0)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {report.summary.consumptionPercentage.toFixed(0)}% del total
+                  </p>
+                </CardContent>
+              </Card>
+
+              {/* Horas disponibles */}
+              <Card>
+                <CardContent className="p-6 relative">
+                  <div className="absolute top-4 right-4 w-10 h-10 rounded-full border border-primary/30 bg-muted flex items-center justify-center">
+                    <Zap className="w-5 h-5 text-foreground" />
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-2">Horas disponibles</p>
+                  <p className="text-3xl font-bold text-foreground mb-1">
+                    {(report.summary.totalHoursAvailable - report.summary.totalHoursConsumed).toFixed(0)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Listas para usar</p>
+                </CardContent>
+              </Card>
                 </div>
 
-                {/* Progress Bars */}
-                <div className="space-y-6">
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm text-muted-foreground">Horas consumidas</span>
-                      <span className="text-2xl font-bold text-foreground">{report.summary.totalHoursConsumed.toFixed(1)}h</span>
+            {/* Progreso del paquete y Ritmo y proyección en paralelo */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Progreso del paquete */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base font-medium">Progreso del paquete</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm text-muted-foreground">
+                      {report.summary.totalHoursConsumed.toFixed(0)} de {report.totalHours} horas utilizadas
+                    </p>
+                    <p className="text-2xl font-bold text-foreground">
+                      {report.summary.consumptionPercentage.toFixed(0)}%
+                    </p>
                     </div>
-                    <div className="w-full rounded-full h-4 overflow-hidden bg-secondary">
+                  <div className="w-full rounded-full h-3 bg-muted overflow-hidden">
                       <div
-                        className="bg-primary h-full transition-all"
+                      className="bg-primary h-full rounded-full transition-all"
                         style={{ width: `${report.summary.consumptionPercentage}%` }}
                       />
                     </div>
-                  </div>
-                  
-                  <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm text-muted-foreground">Horas disponibles</span>
-                      <span className="text-2xl font-bold text-foreground">
-                        {(report.summary.totalHoursAvailable - report.summary.totalHoursConsumed).toFixed(1)}h
-                      </span>
-                    </div>
-                    <div className="w-full rounded-full h-4 overflow-hidden bg-secondary">
-                      <div
-                        className="bg-teal-400 h-full transition-all"
-                        style={{ width: `${100 - report.summary.consumptionPercentage}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Última actualización: {getLastUpdateDate()}
+                  </p>
                 </CardContent>
               </Card>
 
-              {/* Top Right - Grid of 4 small cards */}
-              <div className="grid grid-cols-1 gap-4 lg:col-span-1">
-                {/* Row 1 */}
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Velocidad de Consumo */}
-                  <Card>
-                    <CardContent className="p-4 flex items-start gap-3">
-                      <TrendingUp className="w-8 h-8 text-primary flex-shrink-0" />
-                      <div>
-                        <p className="text-2xl font-bold text-foreground">{report.summary.consumptionSpeed.toFixed(2)}h/día</p>
-                        <p className="text-xs mt-1 text-muted-foreground">Últimos 7 días</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Estimación */}
-                  <Card>
-                    <CardContent className="p-4 flex items-start gap-3">
-                      <Calendar className="w-8 h-8 text-blue-600 flex-shrink-0" />
-                      <div>
-                        <p className="text-2xl font-bold text-foreground">~{report.summary.estimatedDaysRemaining} días</p>
-                        <p className="text-xs mt-1 text-muted-foreground">Para agotar paquete</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Row 2 */}
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Tag Activo */}
-                  {report.activeTag && (
-                    <Card className="col-span-2 border-green-500 border-2">
-                      <CardContent className="p-4 flex items-start gap-3">
-                        <CheckCircle className="w-8 h-8 text-green-600 flex-shrink-0" />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-muted-foreground">Tag Activo</p>
-                          <p className="text-xl font-bold text-green-700">{report.activeTag}</p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-                  {/* Tareas Completadas */}
-                  <Card>
-                    <CardContent className="p-4 flex items-start gap-3">
-                      <div className="w-8 h-8 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center flex-shrink-0">
-                        <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
-                      </div>
-                      <div>
-                        <p className="text-2xl font-bold text-foreground">{report.summary.completedTasks}</p>
-                        <p className="text-xs mt-1 text-muted-foreground">Entradas de tiempo</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Promedio por Tarea */}
-                  <Card>
-                    <CardContent className="p-4 flex items-start gap-3">
-                      <Clock className="w-8 h-8 text-purple-600 flex-shrink-0" />
-                      <div>
-                        <p className="text-2xl font-bold text-foreground">{report.summary.averageHoursPerTask.toFixed(1)}h</p>
-                        <p className="text-xs mt-1 text-muted-foreground">Por tarea única</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-            </div>
-
-            {/* Charts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Evolución del Consumo Acumulado */}
+              {/* Ritmo y proyección */}
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5" />
-                    Consumo Acumulado
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={report.summary.consumptionEvolution}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis 
-                      dataKey="date" 
-                      tick={{ fill: 'hsl(var(--muted-foreground))' }}
-                      tickFormatter={(value) => {
-                        const date = new Date(value);
-                        return `${date.getDate()}/${date.getMonth() + 1}`;
-                      }}
-                    />
-                    <YAxis 
-                      label={{ value: 'Horas', angle: -90, position: 'insideLeft', style: { fill: 'hsl(var(--muted-foreground))' } }}
-                      tick={{ fill: 'hsl(var(--muted-foreground))' }}
-                    />
-                    <Tooltip 
-                      labelFormatter={(label) => `Fecha: ${new Date(label).toLocaleDateString('es-ES')}`}
-                      formatter={(value: number) => `${value.toFixed(1)}h`}
-                      contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))' }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="hours" 
-                      stroke="hsl(var(--primary))" 
-                      strokeWidth={2}
-                      dot={{ r: 4 }}
-                      activeDot={{ r: 6 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-                <p className="text-xs text-center mt-2 text-muted-foreground">
-                  Total acumulado de horas trabajadas
-                </p>
-                </CardContent>
-              </Card>
-
-              {/* Distribución por Miembro del Equipo */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Users className="w-5 h-5" />
-                    Horas por Miembro del Equipo
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                {report.summary.teamDistribution.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={report.summary.teamDistribution} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis 
-                        type="number" 
-                        tick={{ fill: 'hsl(var(--muted-foreground))' }}
-                        label={{ value: 'Horas', position: 'insideBottom', offset: -5 }}
-                      />
-                      <YAxis 
-                        dataKey="name" 
-                        type="category" 
-                        width={100} 
-                        tick={{ fill: 'hsl(var(--muted-foreground))' }}
-                        tickLine={false}
-                      />
-                      <Tooltip 
-                        formatter={(value: number) => `${value.toFixed(1)}h`}
-                        contentStyle={{ 
-                          backgroundColor: 'hsl(var(--card))', 
-                          border: '1px solid hsl(var(--border))' 
-                        }}
-                      />
-                      <Bar 
-                        dataKey="hours" 
-                        fill="hsl(var(--primary))" 
-                        radius={[0, 4, 4, 0]} 
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-[300px] flex items-center justify-center text-muted-foreground">
-                    No hay datos de equipo disponibles
-                  </div>
-                )}
-                </CardContent>
-              </Card>
-
-              {/* Consumo por Proyectos */}
-              <Card className="lg:col-span-2">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Package className="w-5 h-5" />
-                    Consumo por Proyecto
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                {projectConsumption().length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={projectConsumption()}>
-                      <XAxis 
-                        dataKey="name" 
-                        angle={-45}
-                        textAnchor="end"
-                        height={80}
-                      />
-                      <YAxis 
-                      />
-                      <Tooltip 
-                        formatter={(value: number) => `${value.toFixed(1)}h`}
-                      />
-                      <Bar dataKey="hours" fill="#10b981" radius={[8, 8, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-[300px] flex items-center justify-center text-muted-foreground">
-                    No hay datos de proyectos disponibles
-                  </div>
-                )}
-                </CardContent>
-              </Card>
-            </div>
-          </>
-        ) : (
-          /* Vista de Tareas */
-          <div className="space-y-6">
-            {/* Header de Tareas */}
-            <Card>
               <CardHeader>
-                <CardTitle className="text-3xl">Tareas del {report.name}</CardTitle>
-                <p className="text-muted-foreground">
-                  {report.summary.completedTasks} tareas únicas • {report.summary.totalHoursConsumed.toFixed(1)} horas totales
-                </p>
+                <CardTitle className="text-base font-medium flex items-center gap-2">
+                  Ritmo y proyección
+                  <TrendingUp className="w-4 h-4 text-primary" />
+                </CardTitle>
               </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Velocidad de consumo</p>
+                    <p className="text-2xl font-bold text-foreground mb-1">
+                      {calculateWeeklySpeed().toFixed(1)}h/semana
+                    </p>
+                    <p className="text-xs text-muted-foreground">Promedio de las últimas 4 semanas</p>
+                    </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-1">Estimación de agotamiento</p>
+                    <p className="text-2xl font-bold text-foreground mb-1">
+                      {calculateWeeksRemaining().toFixed(1)} semanas
+                    </p>
+                    <p className="text-xs text-muted-foreground">Al ritmo actual de trabajo</p>
+                  </div>
+                </div>
+              </CardContent>
             </Card>
+            </div>
 
-            {/* Filtros */}
+            {/* Últimas tareas registradas */}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    <Filter className="w-5 h-5" />
-                    Filtros
-                  </CardTitle>
-                  {(selectedProjects.length > 0 || selectedTags.length > 0 || dateRangeStart || dateRangeEnd) && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedProjects([]);
-                        setSelectedTags([]);
-                        setDateRangeStart('');
-                        setDateRangeEnd('');
-                      }}
-                      className="gap-2"
-                    >
-                      <X className="w-4 h-4" />
-                      Limpiar Todo
-                    </Button>
-                  )}
+                  <CardTitle className="text-base font-medium">Últimas tareas registradas</CardTitle>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setActiveView('tasks')}
+                    className="gap-2 text-muted-foreground group"
+                  >
+                    <span className="group-hover:text-[#000000] transition-colors duration-200 ease-in-out">Ver todas las tareas</span>
+                    <ArrowRight className="w-4 h-4 group-hover:text-[#000000] transition-colors duration-200 ease-in-out" />
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-6">
-                  {/* Filtros activos */}
-                  {(selectedProjects.length > 0 || selectedTags.length > 0 || dateRangeStart || dateRangeEnd) && (
-                    <div className="flex flex-wrap gap-2">
-                      {selectedProjects.map(project => (
-                        <Badge key={project} variant="secondary" className="gap-2 pr-1">
-                          {project}
-                          <button
-                            onClick={() => setSelectedProjects(selectedProjects.filter(p => p !== project))}
-                            className="ml-1 hover:bg-destructive/20 rounded-full p-0.5"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-3 px-4 text-sm font-medium text-foreground">Tarea</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-foreground">Fecha</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-foreground">Proyecto</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-foreground">Responsable</th>
+                        <th className="text-right py-3 px-4 text-sm font-medium text-foreground">Horas</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {getLatestTasks().map((entry, idx) => (
+                        <tr key={idx} className="border-b border-border hover:bg-muted/20 transition-all duration-200 ease-in-out">
+                          <td className="py-3 px-4 text-sm text-foreground">{entry.description || 'Sin descripción'}</td>
+                          <td className="py-3 px-4 text-sm text-muted-foreground">
+                            {formatDateES(new Date(entry.start))}
+                          </td>
+                          <td className="py-3 px-4">
+                            <Badge
+                              className="rounded-full px-3 py-1 border font-bold"
+                              style={{
+                                backgroundColor: getProjectColor(entry.project_name || 'Sin proyecto').fill,
+                                borderColor: getProjectColor(entry.project_name || 'Sin proyecto').stroke,
+                                borderWidth: '1px',
+                                color: getProjectColor(entry.project_name || 'Sin proyecto').base,
+                              }}
+                            >
+                              {entry.project_name || 'Sin proyecto'}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4 text-sm text-muted-foreground">
+                            {entry.user_name || 'Sin usuario'}
+                          </td>
+                          <td className="py-3 px-4 text-sm text-foreground text-right">
+                            {(entry.duration / 3600).toFixed(1)}h
+                          </td>
+                        </tr>
                       ))}
-                      {selectedTags.map(tag => (
-                        <Badge key={tag} variant="secondary" className="gap-2 pr-1">
-                          {tag}
-                          <button
-                            onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))}
-                            className="ml-1 hover:bg-destructive/20 rounded-full p-0.5"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                      {dateRangeStart && (
-                        <Badge variant="secondary" className="gap-2 pr-1">
-                          Desde: {dateRangeStart}
-                          <button
-                            onClick={() => setDateRangeStart('')}
-                            className="ml-1 hover:bg-destructive/20 rounded-full p-0.5"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
-                      )}
-                      {dateRangeEnd && (
-                        <Badge variant="secondary" className="gap-2 pr-1">
-                          Hasta: {dateRangeEnd}
-                          <button
-                            onClick={() => setDateRangeEnd('')}
-                            className="ml-1 hover:bg-destructive/20 rounded-full p-0.5"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
-                      )}
+                    </tbody>
+                  </table>
+              </div>
+              </CardContent>
+            </Card>
+
+            {/* Charts Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Distribución de horas por descripción - Donut Chart */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base font-medium">Distribución de horas por descripción</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {getDescriptionDistribution().length > 0 ? (
+                    <div className="flex gap-6">
+                      {/* Legend */}
+                      <div className="flex-1 space-y-3">
+                        {getDescriptionDistribution().slice(0, 6).map((item, idx) => {
+                          const colors = ['#5CFFBE', '#7B68EE', '#FF6B9D', '#FFD93D', '#6BCF7F', '#A78BFA'];
+                          return (
+                            <div key={idx} className="flex items-center gap-2 cursor-pointer hover:bg-muted/20 p-2 rounded transition-all duration-200 ease-in-out">
+                              <div
+                                className="w-3 h-3 rounded-full"
+                                style={{ backgroundColor: colors[idx % colors.length] }}
+                              />
+                              <div className="flex-1 text-sm text-foreground">
+                                <span>{item.name}</span>
+                    </div>
+                              <div className="text-sm text-muted-foreground">
+                                {item.percentage}% ({item.value.toFixed(1)}h)
+                  </div>
+                </div>
+                          );
+                        })}
+                        <Separator className="my-3" />
+                        <div className="flex justify-between items-center pt-2">
+                          <span className="text-sm font-medium text-foreground">Total de horas</span>
+                          <span className="text-lg font-bold text-foreground">
+                            {report.summary.totalHoursConsumed.toFixed(0)}h
+                          </span>
+              </div>
+                    </div>
+                      {/* Donut Chart */}
+                      <div className="flex-1 flex items-center justify-center">
+                        <ResponsiveContainer width="100%" height={250}>
+                          <PieChart>
+                            <Pie
+                              data={getDescriptionDistribution().slice(0, 6)}
+                              cx="50%"
+                              cy="50%"
+                              labelLine={false}
+                              label={false}
+                              outerRadius={110}
+                              innerRadius={70}
+                              fill="#8884d8"
+                              dataKey="value"
+                              paddingAngle={3}
+                            >
+                              {getDescriptionDistribution().slice(0, 6).map((entry, index) => {
+                                const colors = ['#5CFFBE', '#7B68EE', '#FF6B9D', '#FFD93D', '#6BCF7F', '#A78BFA'];
+                                return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                              })}
+                            </Pie>
+                            <Tooltip
+                              formatter={(value: number, name: string) => [`${value.toFixed(1)}h`, name]}
+                              contentStyle={{
+                                backgroundColor: 'var(--card)',
+                                border: '1px solid var(--border)',
+                                borderRadius: 'var(--radius)',
+                                color: '#FFFFFF',
+                              }}
+                              labelStyle={{
+                                color: '#FFFFFF',
+                                fontWeight: 100,
+                              }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                  </div>
+                    </div>
+                  ) : (
+                    <div className="h-[250px] flex items-center justify-center text-muted-foreground">
+                      No hay datos disponibles
+                  </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Horas por miembro del equipo - Bar Chart Horizontal */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base font-medium">Horas por miembro del equipo</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {report.summary.teamDistribution.length > 0 ? (
+                    <div className="space-y-4">
+                      {report.summary.teamDistribution.map((member, idx) => {
+                        const colors = ['#5CFFBE', '#7B68EE', '#FFD93D', '#FF6B9D'];
+                        const color = colors[idx % colors.length];
+                        const maxHours = Math.max(...report.summary.teamDistribution.map(m => m.hours));
+                        return (
+                          <div key={idx} className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="w-4 h-4 rounded-full"
+                                  style={{ backgroundColor: color }}
+                                />
+                    <div>
+                                  <p className="text-sm font-medium text-foreground">{member.name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {member.name === 'Dani' ? 'Chief Development' : 
+                                     member.name === 'Alberto' ? 'Front Developer' : 
+                                     member.name === 'Jordi' ? 'UX/UI Designer' : 
+                                     'Developer'}
+                                  </p>
+                    </div>
+                  </div>
+                              <p className="text-sm font-semibold text-foreground">
+                                {member.hours.toFixed(0)}h
+                              </p>
+                </div>
+                            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all"
+                                style={{
+                                  width: `${(member.hours / maxHours) * 100}%`,
+                                  backgroundColor: color,
+                                }}
+                              />
+                    </div>
+                    </div>
+                        );
+                      })}
+                  </div>
+                  ) : (
+                    <div className="h-[250px] flex items-center justify-center text-muted-foreground">
+                      No hay datos de equipo disponibles
                     </div>
                   )}
+                </CardContent>
+              </Card>
 
-                  {/* Selectores de filtros */}
-                  <div className="flex flex-wrap gap-3">
+              {/* Consumo acumulado por meses - Bar Chart */}
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base font-medium">Consumo acumulado por meses</CardTitle>
+                    <div className="flex items-center gap-3">
+                      <p className="text-sm text-muted-foreground">
+                        {getMonthlyStats().totalHours.toFixed(0)}h totales
+                      </p>
+                      {/* Selector de tiempo */}
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" className="gap-2">
+                            <Calendar className="w-4 h-4" />
+                            {timePeriod === 'año-actual' && 'Año actual'}
+                            {timePeriod === 'año-anterior' && 'Año anterior'}
+                            {timePeriod === 'ultimos-12-meses' && 'Últimos 12 meses'}
+                            {timePeriod === 'ultimos-7-dias' && 'Últimos 7 días'}
+                            {timePeriod === 'mes-actual' && 'Mes actual'}
+                            {timePeriod === 'mes-anterior' && 'Mes anterior'}
+                            {timePeriod === 'trimestre-1' && '1 trimestre'}
+                            {timePeriod === 'trimestre-2' && '2 trimestre'}
+                            {timePeriod === 'trimestre-3' && '3 trimestre'}
+                            {timePeriod === 'trimestre-4' && '4 trimestre'}
+                            {timePeriod === 'personalizado' && 'Personalizado'}
+                            <ChevronDown className="w-4 h-4" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-56">
+                          <div className="space-y-1">
+                            <Button
+                              variant={timePeriod === 'año-actual' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('año-actual')}
+                            >
+                              Año actual
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'año-anterior' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('año-anterior')}
+                            >
+                              Año anterior
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'ultimos-12-meses' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('ultimos-12-meses')}
+                            >
+                              Últimos 12 meses
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'ultimos-7-dias' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('ultimos-7-dias')}
+                            >
+                              Últimos 7 días
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'mes-actual' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('mes-actual')}
+                            >
+                              Mes actual
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'mes-anterior' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('mes-anterior')}
+                            >
+                              Mes anterior
+                            </Button>
+                            <Separator />
+                            <Button
+                              variant={timePeriod === 'trimestre-1' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('trimestre-1')}
+                            >
+                              1 trimestre
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'trimestre-2' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('trimestre-2')}
+                            >
+                              2 trimestre
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'trimestre-3' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('trimestre-3')}
+                            >
+                              3 trimestre
+                            </Button>
+                            <Button
+                              variant={timePeriod === 'trimestre-4' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('trimestre-4')}
+                            >
+                              4 trimestre
+                            </Button>
+                            <Separator />
+                            <Button
+                              variant={timePeriod === 'personalizado' ? 'default' : 'ghost'}
+                              className="w-full justify-start"
+                              onClick={() => setTimePeriod('personalizado')}
+                            >
+                              Personalizado
+                            </Button>
+                            {timePeriod === 'personalizado' && (
+                              <div className="mt-2 space-y-2 pt-2 border-t">
+                    <div>
+                                  <Label htmlFor="custom-start" className="text-xs">
+                                    Fecha inicio
+                                  </Label>
+                                  <input
+                                    id="custom-start"
+                                    type="date"
+                                    value={customDateStart}
+                                    onChange={(e) => setCustomDateStart(e.target.value)}
+                                    className="w-full mt-1 px-2 py-1 text-xs rounded-md border border-input bg-background"
+                                  />
+                    </div>
+                                <div>
+                                  <Label htmlFor="custom-end" className="text-xs">
+                                    Fecha fin
+                                  </Label>
+                                  <input
+                                    id="custom-end"
+                                    type="date"
+                                    value={customDateEnd}
+                                    onChange={(e) => setCustomDateEnd(e.target.value)}
+                                    className="w-full mt-1 px-2 py-1 text-xs rounded-md border border-input bg-background"
+                                  />
+                  </div>
+                </div>
+                            )}
+              </div>
+                        </PopoverContent>
+                      </Popover>
+            </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {getMonthlyConsumption().length > 0 ? (
+                    <>
+                <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={getMonthlyConsumption()}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    <XAxis 
+                            dataKey="month"
+                            stroke="var(--foreground)"
+                            tickLine={false}
+                            axisLine={{ stroke: 'var(--border)' }}
+                            tick={{ fill: 'var(--muted-foreground)' }}
+                    />
+                    <YAxis 
+                            stroke="var(--foreground)"
+                            tickLine={false}
+                            axisLine={{ stroke: 'var(--border)' }}
+                            tick={{ fill: 'var(--muted-foreground)' }}
+                            domain={[0, Math.max(...getMonthlyConsumption().map(d => d.hours), 1) * 1.2]}
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => `${value.toFixed(1)}h`}
+                            contentStyle={{
+                              backgroundColor: 'var(--card)',
+                              border: '1px solid var(--border)',
+                              borderRadius: 'var(--radius)',
+                              padding: '0.75rem',
+                              color: '#FFFFFF',
+                            }}
+                            labelStyle={{
+                              color: '#FFFFFF',
+                              fontWeight: 100,
+                            }}
+                          />
+                          <Bar
+                      dataKey="hours" 
+                            fill="#5CFFBE"
+                            radius={[8, 8, 0, 0]}
+                          />
+                        </BarChart>
+                </ResponsiveContainer>
+                      <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-border">
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Promedio mensual</p>
+                          <p className="text-sm font-semibold text-foreground">
+                            {getMonthlyStats().average.toFixed(1)}h
+                </p>
+              </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Mes con más horas</p>
+                          <p className="text-sm font-semibold text-foreground">
+                            {getMonthlyStats().maxMonth ? `${getMonthlyStats().maxMonth?.month} (${getMonthlyStats().maxMonth?.hours.toFixed(0)}h)` : 'N/A'}
+                          </p>
+                  </div>
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-1">Tendencia</p>
+                            <p className="text-sm font-semibold text-foreground">
+                              {getMonthlyStats().trend}
+                            </p>
+                          </div>
+                          {getMonthlyStats().trend !== 'Decreciente' && (
+                            <TrendingUp className="w-4 h-4 text-primary" />
+                )}
+              </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                      No hay datos mensuales disponibles
+                  </div>
+                )}
+                </CardContent>
+              </Card>
+              </div>
+
+            {/* Transparencia total */}
+            <Card>
+              <CardContent className="p-6 flex items-start gap-4">
+                <div className="w-12 h-12 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                  <ShieldCheck className="w-6 h-6 text-primary-foreground" />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Cada hora registrada se asocia a una tarea concreta. Los datos se actualizan automáticamente desde nuestro sistema de control horario, garantizando precisión y claridad en todo momento.
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Call to Action */}
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-start gap-4 mb-6">
+                  <MessageSquare className="w-5 h-5 text-foreground mt-1 flex-shrink-0" />
+                  <div>
+                    <p className="text-base font-medium text-foreground mb-2">
+                      ¿Quieres priorizar una tarea o comentar algo sobre el progreso?
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Estamos aquí para adaptarnos a tus necesidades. No dudes en contactarnos.
+                    </p>
+                  </div>
+                </div>
+                <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 gap-2">
+                  Enviar mensaje al equipo
+                  <Send className="w-4 h-4" />
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Footer */}
+            <div className="text-center py-8">
+              <p className="text-xs text-muted-foreground">
+                © 2025 Tres Puntos Comunicación · Agencia de UX/UI
+              </p>
+            </div>
+          </>
+        ) : (
+          /* Vista de Tareas - Con botón para volver */
+          <div className="space-y-6">
+            {/* Botón para volver al resumen */}
+            <Button
+              variant="ghost"
+              onClick={() => setActiveView('summary')}
+              className="gap-2 text-muted-foreground hover:text-foreground"
+            >
+              <ArrowRight className="w-4 h-4 rotate-180" />
+              Volver al resumen
+            </Button>
+
+            {/* Header de Tareas y Filtros en la misma fila */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Header de Tareas */}
+              <Card className="lg:col-span-1">
+                <CardHeader>
+                  <CardTitle className="text-2xl">Tareas del {report.name}</CardTitle>
+                  <p className="text-muted-foreground text-sm">
+                {report.summary.completedTasks} tareas únicas • {report.summary.totalHoursConsumed.toFixed(1)} horas totales
+              </p>
+                </CardHeader>
+              </Card>
+
+            {/* Filtros */}
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Filter className="w-5 h-5" />
+                    Filtros
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex flex-wrap items-center gap-3">
                     {/* Project Filter Popover */}
                     <Popover>
                       <PopoverTrigger asChild>
@@ -844,7 +1617,7 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                                 </Label>
                               </div>
                             ))}
-                          </div>
+                </div>
                         </div>
                       </PopoverContent>
                     </Popover>
@@ -867,7 +1640,7 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                           <Label className="text-sm font-semibold">Seleccionar Tags</Label>
                           <Separator />
                           <div className="max-h-64 overflow-y-auto space-y-2">
-                            {getUniqueTags().map(tag => (
+                    {getUniqueTags().map(tag => (
                               <div key={tag} className="flex items-center space-x-2">
                                 <Checkbox
                                   id={`tag-${tag}`}
@@ -888,7 +1661,7 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                                 </Label>
                               </div>
                             ))}
-                          </div>
+                </div>
                         </div>
                       </PopoverContent>
                     </Popover>
@@ -910,46 +1683,43 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                         <div className="space-y-4">
                           <Label className="text-sm font-semibold">Rango de Fechas</Label>
                           <Separator />
-                          <div className="space-y-2">
+                  <div className="space-y-2">
                             <div>
                               <Label htmlFor="date-start" className="text-xs text-muted-foreground">
                                 Fecha Inicio
                               </Label>
-                              <input
+                    <input
                                 id="date-start"
-                                type="date"
-                                value={dateRangeStart}
-                                onChange={(e) => setDateRangeStart(e.target.value)}
+                      type="date"
+                      value={dateRangeStart}
+                      onChange={(e) => setDateRangeStart(e.target.value)}
                                 className="w-full mt-1 px-3 py-2 rounded-md border border-input bg-background"
-                              />
+                    />
                             </div>
                             <div>
                               <Label htmlFor="date-end" className="text-xs text-muted-foreground">
                                 Fecha Fin
                               </Label>
-                              <input
+                    <input
                                 id="date-end"
-                                type="date"
-                                value={dateRangeEnd}
-                                onChange={(e) => setDateRangeEnd(e.target.value)}
+                      type="date"
+                      value={dateRangeEnd}
+                      onChange={(e) => setDateRangeEnd(e.target.value)}
                                 className="w-full mt-1 px-3 py-2 rounded-md border border-input bg-background"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
+                    />
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+                      </PopoverContent>
+                    </Popover>
 
             {/* Botones de Expandir/Colapsar */}
-            <div className="flex justify-end gap-3">
-              <Button
-                variant="outline"
+                    <div className="flex gap-2 ml-auto">
+                      <Button
+                        variant="outline"
+                        size="sm"
                 onClick={() => {
-                  const allExpanded: Record<string, boolean> = {};
+                          const allExpanded: Record<string, boolean> = {};
                   getFilteredTasks().forEach(task => {
                     allExpanded[task.description] = true;
                   });
@@ -957,14 +1727,99 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                 }}
               >
                 Expandir Todo
-              </Button>
-              <Button
-                variant="outline"
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
                 onClick={() => setExpandedTasks({})}
               >
                 Colapsar Todo
-              </Button>
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
+
+            {/* Filtros activos */}
+            {(selectedProjects.length > 0 || selectedTags.length > 0 || dateRangeStart || dateRangeEnd) && (
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="flex flex-wrap gap-2">
+                      {selectedProjects.map(project => {
+                        const colors = getProjectColor(project);
+                        return (
+                          <Badge
+                            key={project}
+                            className="rounded-full px-3 py-1 border gap-2 pr-1"
+                            style={{
+                              backgroundColor: colors.fill,
+                              borderColor: colors.stroke,
+                              borderWidth: '1px',
+                              color: colors.base,
+                            }}
+                          >
+                            {project}
+                            <button
+                              onClick={() => setSelectedProjects(selectedProjects.filter(p => p !== project))}
+                              className="ml-1 hover:bg-white/10 rounded-full p-0.5 transition-all duration-200 ease-in-out"
+                            >
+                              <X className="w-3 h-3" />
+              </button>
+                          </Badge>
+                        );
+                      })}
+                      {selectedTags.map(tag => (
+                        <Badge key={tag} variant="secondary" className="gap-2 pr-1">
+                          {tag}
+                          <button
+                            onClick={() => setSelectedTags(selectedTags.filter(t => t !== tag))}
+                            className="ml-1 hover:bg-destructive/10 rounded-full p-0.5 transition-all duration-200 ease-in-out"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </Badge>
+                      ))}
+                      {dateRangeStart && (
+                        <Badge variant="secondary" className="gap-2 pr-1">
+                          Desde: {dateRangeStart}
+                          <button
+                            onClick={() => setDateRangeStart('')}
+                            className="ml-1 hover:bg-destructive/10 rounded-full p-0.5 transition-all duration-200 ease-in-out"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </Badge>
+                      )}
+                      {dateRangeEnd && (
+                        <Badge variant="secondary" className="gap-2 pr-1">
+                          Hasta: {dateRangeEnd}
+                          <button
+                            onClick={() => setDateRangeEnd('')}
+                            className="ml-1 hover:bg-destructive/10 rounded-full p-0.5 transition-all duration-200 ease-in-out"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </Badge>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedProjects([]);
+                          setSelectedTags([]);
+                          setDateRangeStart('');
+                          setDateRangeEnd('');
+                        }}
+                        className="gap-2"
+                      >
+                        <X className="w-4 h-4" />
+                        Limpiar Todo
+                      </Button>
+            </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Tareas Agrupadas */}
             <Card>
@@ -989,7 +1844,7 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                     <div key={idx} className="border-b last:border-b-0">
                       <button
                         onClick={() => toggleTask(task.description)}
-                        className="w-full p-4 flex items-center gap-4 transition-colors hover:bg-accent"
+                        className="w-full p-4 flex items-center gap-4 transition-all duration-300 ease-in-out hover:bg-muted/30 hover:shadow-sm group"
                       >
                         <svg
                           className={`w-5 h-5 transform transition-transform ${expandedTasks[task.description] ? 'rotate-90' : ''} text-muted-foreground`}
@@ -1001,7 +1856,7 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                         </svg>
                         
                         <div className="flex-1 text-left">
-                          <p className="font-bold text-foreground">{task.description}</p>
+                          <p className="font-bold text-foreground transition-colors duration-200 ease-in-out group-hover:text-[#5CFFBE]">{task.description}</p>
                           <p className="text-sm mt-1 text-muted-foreground">{task.count} entradas</p>
                           
                           {/* Tags de las entradas */}
@@ -1013,34 +1868,6 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                                 </Badge>
                               ))}
                             </div>
-                          )}
-                          
-                          {/* Desplegable de Tags del Reporte */}
-                          {report.reportTags && report.reportTags.length > 0 && (
-                            <details className="mt-2">
-                              <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 inline-block">
-                                Tags del reporte ({report.reportTags.length}) ▼
-                              </summary>
-                              <div className="mt-2 flex flex-wrap gap-1 pl-4">
-                                {report.reportTags.map((reportTag) => {
-                                  const isActive = reportTag.name === report.activeTag;
-                                  const status = reportTag.status === 'active' || isActive ? 'active' : 'completed';
-                                  return (
-                                    <Badge
-                                      key={reportTag.name}
-                                      variant={isActive ? 'default' : 'secondary'}
-                                      className={isActive ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}
-                                    >
-                                      {reportTag.name}
-                                      {isActive && <span className="ml-1 text-xs">(Activo)</span>}
-                                      {status === 'completed' && !isActive && (
-                                        <span className="ml-1 text-xs">(Completado)</span>
-                                      )}
-                                    </Badge>
-                                  );
-                                })}
-                              </div>
-                            </details>
                           )}
                         </div>
                         
@@ -1056,18 +1883,28 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                             {task.entries.map((entry, eIdx) => (
                               <Card key={eIdx} className="p-3">
                                 <div className="flex justify-between items-center text-sm">
-                                  <div className="flex-1">
+                                <div className="flex-1">
                                     <p className="font-medium text-foreground">{entry.description || 'Sin descripción'}</p>
-                                    <div className="flex gap-3 mt-1">
-                                      <p className="text-xs text-muted-foreground">{entry.project_name}</p>
+                                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                      <Badge
+                                        className="rounded-full text-xs px-2 py-0.5 border font-bold"
+                                        style={{
+                                          backgroundColor: getProjectColor(entry.project_name || 'Sin proyecto').fill,
+                                          borderColor: getProjectColor(entry.project_name || 'Sin proyecto').stroke,
+                                          borderWidth: '1px',
+                                          color: getProjectColor(entry.project_name || 'Sin proyecto').base,
+                                        }}
+                                      >
+                                        {entry.project_name || 'Sin proyecto'}
+                                      </Badge>
                                       <p className="text-xs text-muted-foreground">•</p>
                                       <p className="text-xs text-muted-foreground">{entry.user_name}</p>
                                       <p className="text-xs text-muted-foreground">•</p>
                                       <p className="text-xs text-muted-foreground">{new Date(entry.start).toLocaleDateString()}</p>
-                                    </div>
                                   </div>
-                                  <p className="font-semibold text-primary">{(entry.duration / 3600).toFixed(2)}h</p>
                                 </div>
+                                  <p className="font-semibold text-primary">{(entry.duration / 3600).toFixed(2)}h</p>
+                              </div>
                               </Card>
                             ))}
                           </div>
@@ -1085,3 +1922,4 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
     </div>
   );
 }
+

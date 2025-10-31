@@ -1,0 +1,582 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2865
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 # Gu\'eda de Estilo Visual - Panel Cliente Tres Puntos Comunicaci\'f3n\
+\
+## \uc0\u55357 \u56523  Descripci\'f3n General\
+Este documento detalla todos los aspectos visuales del panel de cliente profesional para la agencia de UX/UI "Tres Puntos Comunicaci\'f3n". El dise\'f1o es moderno, minimalista y profesional con un enfoque en modo oscuro (dark mode).\
+\
+---\
+\
+## \uc0\u55356 \u57256  Paleta de Colores\
+\
+### Colores Principales (Dark Mode)\
+\
+#### Backgrounds\
+- **Background Principal**: `#141414` - Negro mate para el fondo principal\
+- **Card Background**: `#1E1E1E` - Gris oscuro para tarjetas y contenedores\
+- **Muted Background**: `#2A2A2A` - Gris medio para elementos secundarios\
+\
+#### Foreground/Texto\
+- **Foreground Principal**: `#BDBDBC` - Gris claro para texto principal\
+- **Muted Foreground**: `#8A8A88` - Gris medio para texto secundario\
+\
+#### Color de Marca\
+- **Primary (Verde Menta)**: `#5CFFBE` - Color principal de marca\
+- **Primary Foreground**: `#141414` - Texto sobre color primario\
+\
+#### Bordes y Separadores\
+- **Border**: `#3D3D3B` - Gris oscuro para bordes\
+- **Secondary**: `#3D3D3B` - Color secundario para elementos\
+\
+#### Inputs\
+- **Input Background**: `#2A2A2A` - Fondo para campos de entrada\
+- **Ring (Focus)**: `#5CFFBE` - Color de enfoque/anillos\
+\
+### Colores de Gr\'e1ficos (Charts)\
+\
+```css\
+--chart-1: #5CFFBE  /* Verde menta (principal) */\
+--chart-2: #7B68EE  /* P\'farpura medio */\
+--chart-3: #FF6B9D  /* Rosa */\
+--chart-4: #FFD93D  /* Amarillo */\
+--chart-5: #6BCF7F  /* Verde suave */\
+```\
+\
+### Variables CSS Completas\
+\
+```css\
+.dark \{\
+  --background: #141414;\
+  --foreground: #BDBDBC;\
+  --card: #1E1E1E;\
+  --card-foreground: #BDBDBC;\
+  --popover: #1E1E1E;\
+  --popover-foreground: #BDBDBC;\
+  --primary: #5CFFBE;\
+  --primary-foreground: #141414;\
+  --secondary: #3D3D3B;\
+  --secondary-foreground: #BDBDBC;\
+  --muted: #2A2A2A;\
+  --muted-foreground: #8A8A88;\
+  --accent: #5CFFBE;\
+  --accent-foreground: #141414;\
+  --border: #3D3D3B;\
+  --input: #2A2A2A;\
+  --ring: #5CFFBE;\
+  --chart-1: #5CFFBE;\
+  --chart-2: #7B68EE;\
+  --chart-3: #FF6B9D;\
+  --chart-4: #FFD93D;\
+  --chart-5: #6BCF7F;\
+\}\
+```\
+\
+---\
+\
+## \uc0\u55357 \u56541  Tipograf\'eda\
+\
+### Sistema de Fuentes\
+- **Familia**: Sans-serif moderna (sistema por defecto)\
+- **Tama\'f1o base**: `16px`\
+\
+### Jerarqu\'eda Tipogr\'e1fica\
+\
+```css\
+h1 \{\
+  font-size: var(--text-2xl);      /* ~1.5rem / 24px */\
+  font-weight: 500;                /* Medium */\
+  line-height: 1.5;\
+\}\
+\
+h2 \{\
+  font-size: var(--text-xl);       /* ~1.25rem / 20px */\
+  font-weight: 500;                /* Medium */\
+  line-height: 1.5;\
+\}\
+\
+h3 \{\
+  font-size: var(--text-lg);       /* ~1.125rem / 18px */\
+  font-weight: 500;                /* Medium */\
+  line-height: 1.5;\
+\}\
+\
+h4 \{\
+  font-size: var(--text-base);     /* 1rem / 16px */\
+  font-weight: 500;                /* Medium */\
+  line-height: 1.5;\
+\}\
+\
+p \{\
+  font-size: var(--text-base);     /* 1rem / 16px */\
+  font-weight: 400;                /* Normal */\
+  line-height: 1.5;\
+\}\
+\
+button, label \{\
+  font-size: var(--text-base);     /* 1rem / 16px */\
+  font-weight: 500;                /* Medium */\
+  line-height: 1.5;\
+\}\
+```\
+\
+### Tama\'f1os Personalizados\
+\
+Para n\'fameros grandes o destacados:\
+- **Text-lg**: `text-lg` (1.125rem / 18px)\
+- **Text-xl**: `text-xl` (1.25rem / 20px)\
+- **Text-2xl**: `text-[2rem]` (32px) - Para porcentajes en progreso\
+- **Text-sm**: `text-sm` (0.875rem / 14px) - Para texto secundario\
+\
+---\
+\
+## \uc0\u55357 \u56528  Espaciado y Layout\
+\
+### Contenedor Principal\
+```css\
+max-width: 1400px;\
+margin: 0 auto;\
+padding: 3rem (lg), 2rem (md), 1.5rem (sm);\
+```\
+\
+### Espaciado entre Secciones\
+```css\
+gap/space-y: 2rem (8 units / 32px)\
+```\
+\
+### Grid de Estad\'edsticas\
+```css\
+grid-cols-1 md:grid-cols-3\
+gap: 1.5rem (6 units / 24px)\
+```\
+\
+### Grid de Gr\'e1ficos\
+```css\
+grid-cols-1 lg:grid-cols-2\
+gap: 1.5rem (6 units / 24px)\
+```\
+\
+---\
+\
+## \uc0\u55356 \u57263  Bordes y Radios\
+\
+### Border Radius\
+```css\
+--radius: 0.625rem;              /* 10px - Radio base */\
+--radius-sm: calc(var(--radius) - 4px);   /* 6px */\
+--radius-md: calc(var(--radius) - 2px);   /* 8px */\
+--radius-lg: var(--radius);               /* 10px */\
+--radius-xl: calc(var(--radius) + 4px);   /* 14px */\
+```\
+\
+### Aplicaci\'f3n de Bordes\
+```css\
+border: 1px solid var(--border);          /* #3D3D3B */\
+border-radius: var(--radius-lg);          /* 10px */\
+```\
+\
+---\
+\
+## \uc0\u55356 \u57261  Componentes Espec\'edficos\
+\
+### Cards (Tarjetas)\
+```css\
+background: var(--card);                  /* #1E1E1E */\
+border: 1px solid var(--border);          /* #3D3D3B */\
+border-radius: var(--radius-lg);          /* 10px */\
+```\
+\
+### Badges\
+- **Estilo**: `variant="outline"`\
+- **Border**: Border del color del tema\
+- **Backgrounds**: Semi-transparentes (20% opacity)\
+\
+Ejemplos:\
+```css\
+/* Verde menta */\
+.badge-chart-1 \{\
+  background: rgba(92, 255, 190, 0.2);\
+  color: #5CFFBE;\
+  border-color: rgba(92, 255, 190, 0.3);\
+\}\
+\
+/* P\'farpura */\
+.badge-chart-2 \{\
+  background: rgba(123, 104, 238, 0.2);\
+  color: #7B68EE;\
+  border-color: rgba(123, 104, 238, 0.3);\
+\}\
+```\
+\
+### Botones\
+\
+#### Bot\'f3n Primario\
+```css\
+background: var(--primary);               /* #5CFFBE */\
+color: var(--primary-foreground);         /* #141414 */\
+hover:background: rgba(92, 255, 190, 0.9);\
+border-radius: var(--radius-md);\
+```\
+\
+#### Bot\'f3n Ghost\
+```css\
+background: transparent;\
+color: var(--foreground);\
+hover:background: var(--muted);           /* #2A2A2A */\
+```\
+\
+### Progress Bar\
+```css\
+height: 0.75rem;                          /* 12px */\
+background: var(--muted);                 /* #2A2A2A */\
+indicator-background: var(--primary);      /* #5CFFBE */\
+border-radius: 9999px;                    /* full */\
+```\
+\
+### Tablas\
+```css\
+/* Header */\
+background: transparent;\
+border-bottom: 1px solid var(--border);   /* #3D3D3B */\
+text-transform: none;\
+font-weight: 500;\
+\
+/* Rows */\
+border-bottom: 1px solid var(--border);\
+hover:background: rgba(42, 42, 42, 0.5);  /* muted/50 */\
+transition: colors;\
+```\
+\
+### Avatares\
+```css\
+size: 3.5rem (14 units / 56px)            /* Para PM */\
+border: 2px solid rgba(92, 255, 190, 0.3); /* border-primary/30 */\
+border-radius: 9999px;                     /* full */\
+```\
+\
+---\
+\
+## \uc0\u55356 \u57256  Gradientes\
+\
+### Gradiente Principal (Cards destacadas)\
+```css\
+background: linear-gradient(to right, \
+  rgba(92, 255, 190, 0.1),\
+  rgba(92, 255, 190, 0.05),\
+  transparent\
+);\
+border-color: rgba(92, 255, 190, 0.2);\
+```\
+\
+### Gradiente para Feedback Section\
+```css\
+background: linear-gradient(to bottom right,\
+  rgba(92, 255, 190, 0.05),\
+  transparent\
+);\
+border-color: rgba(92, 255, 190, 0.2);\
+```\
+\
+### Gradiente para Gr\'e1ficos de \'c1rea\
+```css\
+<linearGradient id="colorAccumulated" x1="0" y1="0" x2="0" y2="1">\
+  <stop offset="5%" stopColor="#5CFFBE" stopOpacity=\{0.3\} />\
+  <stop offset="95%" stopColor="#5CFFBE" stopOpacity=\{0\} />\
+</linearGradient>\
+```\
+\
+---\
+\
+## \uc0\u10024  Efectos y Animaciones\
+\
+### Transiciones\
+```css\
+transition: all 0.3s ease;\
+transition: colors;                       /* Para hover states */\
+transition: transform;                    /* Para iconos y movimientos */\
+```\
+\
+### Animaciones con Motion (Framer Motion)\
+\
+#### Container Stagger\
+```javascript\
+containerVariants = \{\
+  hidden: \{ opacity: 0 \},\
+  visible: \{\
+    opacity: 1,\
+    transition: \{\
+      staggerChildren: 0.1,\
+    \},\
+  \},\
+\}\
+```\
+\
+#### Item Fade In\
+```javascript\
+itemVariants = \{\
+  hidden: \{ opacity: 0, y: 20 \},\
+  visible: \{\
+    opacity: 1,\
+    y: 0,\
+    transition: \{\
+      duration: 0.5,\
+    \},\
+  \},\
+\}\
+```\
+\
+#### Delays Secuenciales\
+```css\
+delay: 0.2s, 0.3s, 0.4s, etc.\
+```\
+\
+### Hover Effects\
+```css\
+/* Iconos */\
+.icon-hover:hover \{\
+  transform: translateX(4px);\
+\}\
+\
+/* Cards */\
+.card-hover:hover \{\
+  background: rgba(42, 42, 42, 0.5);\
+\}\
+\
+/* Badges en listas */\
+.legend-item:hover \{\
+  background: rgba(42, 42, 42, 0.5);\
+\}\
+```\
+\
+### Pulse Animation\
+```css\
+.pulse-dot \{\
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;\
+\}\
+```\
+\
+---\
+\
+## \uc0\u55357 \u56522  Gr\'e1ficos (Charts)\
+\
+### Configuraci\'f3n General de Recharts\
+\
+#### CartesianGrid\
+```css\
+strokeDasharray: "3 3"\
+stroke: #3D3D3B                          /* secondary */\
+vertical: false                          /* Solo l\'edneas horizontales */\
+```\
+\
+#### Ejes (XAxis/YAxis)\
+```css\
+stroke: #BDBDBC                          /* foreground */\
+tick.fill: #BDBDBC\
+tickLine: false\
+axisLine.stroke: #3D3D3B                 /* border */\
+```\
+\
+#### Donut Chart\
+```css\
+innerRadius: 70\
+outerRadius: 110\
+paddingAngle: 3\
+cx: "50%"\
+cy: "50%"\
+```\
+\
+#### Area Chart\
+```css\
+strokeWidth: 2\
+stroke: #5CFFBE                          /* primary */\
+fill: url(#colorAccumulated)\
+animationDuration: 1000\
+```\
+\
+### Tooltips Personalizados\
+```css\
+background: var(--card);                 /* #1E1E1E */\
+border: 1px solid var(--border);         /* #3D3D3B */\
+border-radius: var(--radius-lg);         /* 10px */\
+padding: 0.75rem;\
+box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);\
+```\
+\
+---\
+\
+## \uc0\u55357 \u56598  Indicadores y Estados\
+\
+### Badge con Estado "Actualizado"\
+```css\
+border-color: rgba(92, 255, 190, 0.3);\
+color: #5CFFBE;\
+background: transparent;\
+```\
+\
+### Punto de Estado (Pulse)\
+```css\
+size: 0.375rem (1.5 units / 6px)\
+border-radius: 9999px\
+background: #5CFFBE\
+animation: pulse\
+```\
+\
+### Iconos de Tendencia\
+```css\
+size: 1.25rem (5 units / 20px)\
+color: var(--primary);                   /* #5CFFBE */\
+```\
+\
+---\
+\
+## \uc0\u55357 \u56561  Responsividad\
+\
+### Breakpoints\
+```css\
+sm: 640px\
+md: 768px\
+lg: 1024px\
+xl: 1280px\
+```\
+\
+### Padding Responsive\
+```css\
+p-6    /* sm */\
+p-8    /* md */\
+p-12   /* lg */\
+```\
+\
+### Grid Responsive\
+```css\
+/* Stats Cards */\
+grid-cols-1 md:grid-cols-3\
+\
+/* Charts */\
+grid-cols-1 lg:grid-cols-2\
+```\
+\
+---\
+\
+## \uc0\u55356 \u57263  Mejores Pr\'e1cticas\
+\
+### Espaciado en Blanco\
+- Usar generosamente el espacio vertical entre secciones (`space-y-8`)\
+- Padding interno de cards: `p-6` a `p-8`\
+- Margins consistentes usando el sistema de spacing de Tailwind\
+\
+### Contraste\
+- Texto principal: `#BDBDBC` sobre `#141414` (excelente contraste)\
+- Texto secundario: `#8A8A88` (reducido pero legible)\
+- Primary color `#5CFFBE` sobre dark backgrounds (alto contraste)\
+\
+### Jerarqu\'eda Visual\
+1. Verde menta (#5CFFBE) para elementos primarios y de acci\'f3n\
+2. Gris claro (#BDBDBC) para texto principal\
+3. Gris medio (#8A8A88) para texto secundario\
+4. Bordes sutiles (#3D3D3B) para separaci\'f3n sin distracci\'f3n\
+\
+### Consistencia\
+- Usar siempre las variables CSS definidas\
+- Border radius consistente (10px base)\
+- Animaciones sutiles y coherentes (0.3s - 0.6s)\
+- Transiciones suaves en todos los estados hover\
+\
+---\
+\
+## \uc0\u55357 \u56550  Clases Tailwind Comunes\
+\
+```css\
+/* Backgrounds */\
+bg-background              /* #141414 */\
+bg-card                    /* #1E1E1E */\
+bg-muted                   /* #2A2A2A */\
+bg-primary                 /* #5CFFBE */\
+\
+/* Text */\
+text-foreground            /* #BDBDBC */\
+text-muted-foreground      /* #8A8A88 */\
+text-primary               /* #5CFFBE */\
+\
+/* Borders */\
+border-border              /* #3D3D3B */\
+border-primary/20          /* rgba(92, 255, 190, 0.2) */\
+border-primary/30          /* rgba(92, 255, 190, 0.3) */\
+\
+/* Opacity Modifiers */\
+bg-primary/10              /* 10% opacity */\
+bg-muted/30                /* 30% opacity */\
+hover:bg-muted/50          /* 50% opacity on hover */\
+\
+/* Sizing */\
+size-4                     /* 1rem / 16px */\
+size-5                     /* 1.25rem / 20px */\
+size-6                     /* 1.5rem / 24px */\
+size-12                    /* 3rem / 48px */\
+size-14                    /* 3.5rem / 56px */\
+\
+/* Spacing */\
+space-y-2                  /* 0.5rem / 8px */\
+space-y-4                  /* 1rem / 16px */\
+space-y-6                  /* 1.5rem / 24px */\
+space-y-8                  /* 2rem / 32px */\
+gap-3                      /* 0.75rem / 12px */\
+gap-4                      /* 1rem / 16px */\
+gap-6                      /* 1.5rem / 24px */\
+\
+/* Padding */\
+p-3                        /* 0.75rem / 12px */\
+p-6                        /* 1.5rem / 24px */\
+p-8                        /* 2rem / 32px */\
+\
+/* Rounded */\
+rounded-lg                 /* 10px */\
+rounded-full               /* 9999px */\
+```\
+\
+---\
+\
+## \uc0\u55356 \u57256  Paleta de Colores Hexadecimal (Referencia R\'e1pida)\
+\
+```\
+Negro Mate:     #141414\
+Gris Oscuro 1:  #1E1E1E\
+Gris Oscuro 2:  #2A2A2A\
+Gris Medio:     #3D3D3B\
+Gris Opaco:     #8A8A88\
+Gris Claro:     #BDBDBC\
+\
+Verde Menta:    #5CFFBE  \uc0\u11088  COLOR PRINCIPAL\
+P\'farpura:        #7B68EE\
+Rosa:           #FF6B9D\
+Amarillo:       #FFD93D\
+Verde Suave:    #6BCF7F\
+Naranja:        #FF8C42\
+```\
+\
+---\
+\
+## \uc0\u55357 \u56523  Checklist de Implementaci\'f3n\
+\
+Al replicar este dise\'f1o, aseg\'farate de:\
+\
+- [ ] Aplicar la clase `dark` al elemento ra\'edz\
+- [ ] Importar todas las variables CSS del archivo `globals.css`\
+- [ ] Usar la paleta de colores espec\'edfica (#141414, #5CFFBE, etc.)\
+- [ ] Mantener el sistema tipogr\'e1fico (no usar clases text-* de tama\'f1o)\
+- [ ] Aplicar border-radius de 10px (`rounded-lg`)\
+- [ ] Usar transiciones suaves (0.3s - 0.6s)\
+- [ ] Implementar animaciones con motion/react\
+- [ ] Mantener espaciado generoso (`space-y-8`)\
+- [ ] Usar gradientes sutiles con opacity baja (5% - 10%)\
+- [ ] Aplicar hover states en elementos interactivos\
+- [ ] Mantener consistencia en el uso de iconos (lucide-react)\
+- [ ] Configurar gr\'e1ficos con los colores chart-1 a chart-5\
+\
+---\
+\
+*Documento creado para replicaci\'f3n exacta del sistema de dise\'f1o visual del Panel Cliente Tres Puntos Comunicaci\'f3n*\
+}

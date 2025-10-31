@@ -19,12 +19,15 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import ReportTagsManager from '@/components/report-tags-manager';
 import type { ReportTag } from '@/lib/report-types';
+import { getTogglMinDate, getTogglMinDateSync, shouldRefreshMinDate } from '@/lib/toggl-date-utils';
+import { toast } from '@/lib/toast';
 
 export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo[] }) {
   const [reportName, setReportName] = useState('');
   const [totalHours, setTotalHours] = useState(80);
   const [configs, setConfigs] = useState<ReportConfig[]>([]);
   const [startDate, setStartDate] = useState('');
+  const [togglMinDate, setTogglMinDate] = useState<string>('');
   const [manualEntries, setManualEntries] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
@@ -35,30 +38,158 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
   const [activeTag, setActiveTag] = useState<string | undefined>(undefined);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
 
-  // Set default date to the earliest allowed date by Toggl API
+  // Set default date to the earliest allowed date by Toggl API (actualizado automáticamente)
   useEffect(() => {
-    // Toggl API allows data from 2025-07-27 onwards
-    const togglMinDate = '2025-07-27';
-    setStartDate(togglMinDate);
-  }, []);
+    const initializeMinDate = async () => {
+      // Usar fecha sincrónica primero para render rápido
+      const syncDate = getTogglMinDateSync();
+      setTogglMinDate(syncDate);
+      setStartDate(syncDate);
+      
+      // Si el cache está expirado o no existe, intentar obtener fecha actualizada
+      if (shouldRefreshMinDate() && apiKeys.length > 0) {
+        try {
+          const freshDate = await getTogglMinDate(apiKeys[0].key);
+          setTogglMinDate(freshDate);
+          if (!startDate || startDate < freshDate) {
+            setStartDate(freshDate);
+          }
+        } catch (error) {
+          console.warn('Error obteniendo fecha mínima de Toggl, usando cache:', error);
+        }
+      }
+    };
+    
+    initializeMinDate();
+    
+    // Verificar cada día si necesita actualizar la fecha
+    const checkInterval = setInterval(() => {
+      if (shouldRefreshMinDate() && apiKeys.length > 0) {
+        getTogglMinDate(apiKeys[0].key).then(date => {
+          setTogglMinDate(date);
+        }).catch(() => {});
+      }
+    }, 60 * 60 * 1000); // Cada hora
+    
+    return () => clearInterval(checkInterval);
+  }, [apiKeys.length]);
 
   // Cargar tags disponibles de todas las API keys
-  useEffect(() => {
-    const loadAvailableTags = async () => {
-      const allTags = new Set<string>();
-      for (const apiKey of apiKeys) {
-        try {
-          const me = await getMe(apiKey.key);
-          (me.tags || []).forEach((tag: any) => {
-            allTags.add(tag.name);
-          });
-        } catch (error) {
+  const loadAvailableTags = async () => {
+    const allTags = new Set<string>();
+    
+    // Verificar si hay un límite de API activo guardado
+    const apiLimitData = localStorage.getItem('toggl_api_limit');
+    let shouldSkipApiCalls = false;
+    let resetTimeSeconds = 0;
+    
+    if (apiLimitData) {
+      try {
+        const limitInfo = JSON.parse(apiLimitData);
+        const resetTime = limitInfo.resetTime || 0;
+        const now = Date.now();
+        
+        // Si el límite aún está activo (no ha pasado el tiempo de reset), no hacer llamadas
+        if (resetTime > now) {
+          shouldSkipApiCalls = true;
+          resetTimeSeconds = Math.ceil((resetTime - now) / 1000);
+          console.log(`⏸️ Límite de API aún activo. Usando solo cache. Reset en ~${Math.ceil(resetTimeSeconds / 60)} minutos.`);
+        } else {
+          // El límite ya expiró, limpiar el dato
+          localStorage.removeItem('toggl_api_limit');
+        }
+      } catch (error) {
+        console.warn('Error leyendo información de límite de API:', error);
+      }
+    }
+    
+    // Primero, cargar tags desde localStorage (cache)
+    const stored = localStorage.getItem('toggl_api_keys');
+    if (stored) {
+      try {
+        const storedApiKeys = JSON.parse(stored);
+        for (const apiKeyInfo of storedApiKeys) {
+          if (apiKeyInfo.tags && Array.isArray(apiKeyInfo.tags)) {
+            apiKeyInfo.tags.forEach((tag: any) => {
+              allTags.add(tag.name);
+            });
+          }
+        }
+        console.log(`✅ Tags cargados desde cache: ${allTags.size}`);
+        // Actualizar inmediatamente con tags del cache
+        setAvailableTags(Array.from(allTags));
+      } catch (error) {
+        console.warn('Error leyendo tags desde cache:', error);
+      }
+    }
+    
+    // Si hay límite activo, no intentar llamadas a la API
+    if (shouldSkipApiCalls) {
+      return;
+    }
+    
+    // Luego, intentar actualizar desde la API (pero detenerse si hay límite)
+    let hasApiLimitError = false;
+    
+    for (const apiKey of apiKeys) {
+      // Si ya hay un error de límite, no intentar más llamadas
+      if (hasApiLimitError) {
+        console.warn(`⛔ Deteniendo carga de tags - límite de API alcanzado`);
+        break;
+      }
+      
+      try {
+        const me = await getMe(apiKey.key);
+        (me.tags || []).forEach((tag: any) => {
+          allTags.add(tag.name);
+        });
+        // Si esta llamada fue exitosa, actualizar el estado de límite (limpiar si existe)
+        localStorage.removeItem('toggl_api_limit');
+      } catch (error: any) {
+        const errorMessage = error?.message || '';
+        
+        // Detectar error de límite de API
+        if (errorMessage.includes('hourly limit') || errorMessage.includes('402') || errorMessage.includes('Payment Required')) {
+          hasApiLimitError = true;
+          
+          // Intentar extraer el tiempo de reset
+          const resetMatch = errorMessage.match(/reset in (\d+) seconds/);
+          if (resetMatch) {
+            resetTimeSeconds = parseInt(resetMatch[1]);
+            const resetTime = Date.now() + (resetTimeSeconds * 1000);
+            
+            // Guardar información del límite en localStorage
+            localStorage.setItem('toggl_api_limit', JSON.stringify({
+              resetTime: resetTime,
+              detectedAt: Date.now(),
+            }));
+          }
+          
+          // No hacer console.error para este caso, ya que es esperado y tenemos cache
+          console.warn(`⚠️ Límite de API alcanzado al cargar tags. Usando tags desde cache.`);
+          // Detener el loop para no hacer más llamadas
+          break;
+        } else {
+          // Para otros errores, sí mostrar el error
           console.error(`Error loading tags for ${apiKey.fullname}:`, error);
         }
       }
-      setAvailableTags(Array.from(allTags));
-    };
+    }
+    
+    // Actualizar tags (ya sea desde cache o API)
+    const finalTags = Array.from(allTags);
+    if (finalTags.length > 0) {
+      setAvailableTags(finalTags);
+    }
+    
+    // Si hubo error de límite y tenemos tiempo de reset, informar
+    if (hasApiLimitError && resetTimeSeconds > 0) {
+      const resetMinutes = Math.ceil(resetTimeSeconds / 60);
+      console.warn(`💡 Límite de API. Usando tags desde cache. Reset en ~${resetMinutes} minuto(s).`);
+    }
+  };
 
+  useEffect(() => {
     if (apiKeys.length > 0) {
       loadAvailableTags();
     }
@@ -149,6 +280,7 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
     reader.readAsText(file);
   };
 
+
   const handleCreateReport = async () => {
     if (!reportName.trim()) {
       setError('Por favor ingresa un nombre para el reporte');
@@ -183,14 +315,31 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
     try {
       const allEntries: any[] = [];
       
+      // Asegurar que la fecha de inicio no sea anterior a la fecha mínima de Toggl
+      const effectiveMinDate = togglMinDate || getTogglMinDateSync();
+      const effectiveStartDate = startDate < effectiveMinDate ? effectiveMinDate : startDate;
+      
+      if (startDate < effectiveMinDate) {
+        console.warn(`Fecha de inicio ${startDate} es anterior a la fecha mínima de Toggl (${effectiveMinDate}). Usando ${effectiveMinDate} en su lugar.`);
+      }
+      
       for (const config of configs) {
         const apiKeyInfo = apiKeys.find(k => k.id === config.selectedApiKey);
         if (!apiKeyInfo) continue;
 
-        const workspaceId = apiKeyInfo.workspaces[0]?.id;
-        if (!workspaceId) continue;
-
-        const entries = await getTimeEntries(apiKeyInfo.key, startDate, currentDate, workspaceId);
+        // Usar el workspace seleccionado en la configuración, o el primero si no está especificado
+        const workspaceId = config.selectedWorkspace 
+          ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+          : apiKeyInfo.workspaces[0]?.id;
+        if (!workspaceId) {
+          console.warn(`[${apiKeyInfo.fullname}] Workspace ID no encontrado`);
+          continue;
+        }
+        
+        const workspaceName = apiKeyInfo.workspaces.find((w: any) => w.id === workspaceId)?.name || 'sin nombre';
+        console.log(`[${apiKeyInfo.fullname}] ✅ Obteniendo entradas desde ${effectiveStartDate} hasta ${currentDate}... Workspace: ${workspaceId} (${workspaceName})`);
+        const entries = await getTimeEntries(apiKeyInfo.key, effectiveStartDate, currentDate, workspaceId);
+        console.log(`[${apiKeyInfo.fullname}] Total entradas obtenidas: ${entries.length}`);
 
         let filtered = entries;
         if (config.selectedClient) {
@@ -229,14 +378,15 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
       // Añadir las entradas manuales importadas del CSV
       allEntries.push(...manualEntries);
 
-      // Añadir un aviso si hay entradas antes de 2025-07-27 que necesitan ser añadidas manualmente
+      // Añadir un aviso si hay entradas antes de 2025-07-29 que necesitan ser añadidas manualmente
       const earliestEntry = allEntries.length > 0 ? allEntries.reduce((earliest, entry) => {
         const entryDate = new Date(entry.start);
         return entryDate < new Date(earliest.start) ? entry : earliest;
       }) : null;
       
-      if (earliestEntry && new Date(earliestEntry.start) >= new Date('2025-07-27')) {
-        console.log('Todas las entradas son desde 2025-07-27 o posterior');
+      const minDate = togglMinDate || getTogglMinDateSync();
+      if (earliestEntry && new Date(earliestEntry.start) >= new Date(minDate)) {
+        console.log(`Todas las entradas son desde ${minDate} o posterior`);
         console.log('Para añadir datos anteriores, por favor indícame los datos del PDF');
       }
 
@@ -334,10 +484,10 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            min="2025-07-27"
+            min={togglMinDate || getTogglMinDateSync()}
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Toggl solo permite obtener datos desde 2025-07-27 en adelante
+            Toggl solo permite obtener datos desde {togglMinDate || getTogglMinDateSync()} en adelante
           </p>
         </div>
       </div>
@@ -357,9 +507,11 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
       <div className="mb-6">
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-lg font-semibold">Configuraciones de Toggl</h3>
-          <Button onClick={addConfig}>
-            + Añadir Configuración
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={addConfig}>
+              + Añadir Configuración
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-4">
@@ -372,7 +524,7 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
                     <label className="block text-sm font-medium mb-1">Cuenta</label>
                     <select
                       value={config.selectedApiKey}
-                      onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedClient: '', selectedProject: '', selectedTags: undefined })}
+                      onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedWorkspace: undefined, selectedClient: '', selectedProject: '', selectedTags: undefined })}
                       className="w-full px-3 py-2 rounded-md border border-input bg-background"
                     >
                       {apiKeys.map(key => (
@@ -380,6 +532,22 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
                       ))}
                     </select>
                   </div>
+                  {apiKeyInfo && apiKeyInfo.workspaces && apiKeyInfo.workspaces.length > 1 && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Workspace</label>
+                      <select
+                        value={config.selectedWorkspace || apiKeyInfo.workspaces[0]?.id || ''}
+                        onChange={(e) => updateConfig(config.id, { selectedWorkspace: e.target.value ? Number(e.target.value) : undefined })}
+                        className="w-full px-3 py-2 rounded-md border border-input bg-background"
+                      >
+                        {apiKeyInfo.workspaces.map((workspace: any) => (
+                          <option key={workspace.id} value={workspace.id}>
+                            {workspace.name || `Workspace ${workspace.id}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-medium mb-1">Cliente</label>
                     <select
@@ -419,7 +587,7 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
       <Card className="mb-6 p-4 bg-primary/5 border-primary/20">
         <h3 className="text-lg font-semibold mb-2">Importar Datos Históricos (CSV)</h3>
         <p className="text-sm text-muted-foreground mb-3">
-          Si necesitas añadir datos anteriores al 2025-07-27, sube un archivo CSV con el formato de la plantilla.
+          Si necesitas añadir datos anteriores al {togglMinDate || getTogglMinDateSync()}, sube un archivo CSV con el formato de la plantilla.
         </p>
         <input
           type="file"

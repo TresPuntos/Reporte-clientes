@@ -11,25 +11,61 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load API keys from localStorage on mount
+  // Load API keys from server (database) on mount
   useEffect(() => {
-    const stored = localStorage.getItem('toggl_api_keys');
-    if (stored) {
-      try {
-        const keys = JSON.parse(stored);
-        setApiKeys(keys);
-        onApiKeysChange(keys);
-      } catch (error) {
-        console.error('Error loading API keys:', error);
-      }
-    }
+    loadApiKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const saveApiKeys = (keys: ApiKeyInfo[]) => {
-    localStorage.setItem('toggl_api_keys', JSON.stringify(keys));
+  const loadApiKeys = async () => {
+    try {
+      const response = await fetch('/api/api-keys');
+      if (response.ok) {
+        const keys = await response.json();
+        setApiKeys(keys);
+        onApiKeysChange(keys);
+      } else {
+        // Fallback a localStorage si el servidor no está disponible (desarrollo)
+        const stored = localStorage.getItem('toggl_api_keys');
+        if (stored) {
+          try {
+            const keys = JSON.parse(stored);
+            setApiKeys(keys);
+            onApiKeysChange(keys);
+          } catch (error) {
+            console.error('Error loading API keys from localStorage:', error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading API keys from server:', error);
+      // Fallback a localStorage
+      const stored = localStorage.getItem('toggl_api_keys');
+      if (stored) {
+        try {
+          const keys = JSON.parse(stored);
+          setApiKeys(keys);
+          onApiKeysChange(keys);
+        } catch (error) {
+          console.error('Error loading API keys from localStorage:', error);
+        }
+      }
+    }
+  };
+
+  const saveApiKeys = async (keys: ApiKeyInfo[]) => {
     setApiKeys(keys);
     onApiKeysChange(keys);
+    
+    // Guardar en BD a través de la API
+    try {
+      // Eliminar todas las keys existentes y guardar las nuevas
+      // Por ahora, solo guardamos cuando se añade/elimina individualmente
+    } catch (error) {
+      console.error('Error syncing API keys to server:', error);
+      // Fallback: también guardar en localStorage como backup
+      localStorage.setItem('toggl_api_keys', JSON.stringify(keys));
+    }
   };
 
   const handleAddApiKey = async () => {
@@ -62,6 +98,28 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
       };
 
       const updatedKeys = [...apiKeys, newKeyInfo];
+      
+      // Guardar en BD
+      try {
+        await fetch('/api/api-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: newKeyInfo.id,
+            key: newKeyInfo.key,
+            fullname: newKeyInfo.fullname,
+            email: newKeyInfo.email,
+            workspaces: newKeyInfo.workspaces,
+            clients: newKeyInfo.clients,
+            projects: newKeyInfo.projects,
+            tags: newKeyInfo.tags,
+          }),
+        });
+      } catch (error) {
+        console.error('Error saving API key to server:', error);
+        // Continuar aunque falle, al menos queda en el estado
+      }
+      
       saveApiKeys(updatedKeys);
       setNewApiKey('');
       setError(null);
@@ -73,7 +131,17 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
     }
   };
 
-  const handleRemoveApiKey = (id: string) => {
+  const handleRemoveApiKey = async (id: string) => {
+    // Eliminar de BD
+    try {
+      await fetch(`/api/api-keys?id=${id}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.error('Error deleting API key from server:', error);
+      // Continuar aunque falle
+    }
+    
     const updatedKeys = apiKeys.filter(key => key.id !== id);
     saveApiKeys(updatedKeys);
   };

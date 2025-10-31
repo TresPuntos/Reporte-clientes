@@ -64,6 +64,10 @@ async function togglFetch<T>(
             const minDate = match[1];
             console.error(`Toggl API minimum date restriction: ${minDate}`);
             errorMessage = `Toggl solo permite obtener datos desde ${minDate}. Por favor, selecciona fechas a partir de ${minDate}`;
+            
+            // Guardar la fecha mínima en localStorage para uso futuro
+            localStorage.setItem('toggl_min_date', minDate);
+            localStorage.setItem('toggl_min_date_cache_time', Date.now().toString());
           }
         }
       }
@@ -232,7 +236,15 @@ async function fetchAllPages(
     
     // Filter entries by workspace on client side
     const filteredEntries = entries.filter(entry => entry.wid === workspaceId);
-    console.log(`Successfully fetched ${entries.length} total entries, ${filteredEntries.length} for workspace ${workspaceId}`);
+    
+    // Debug: Ver qué workspaces tienen las entradas obtenidas
+    const workspaceCounts = entries.reduce((acc: any, entry: any) => {
+      acc[entry.wid] = (acc[entry.wid] || 0) + 1;
+      return acc;
+    }, {});
+    console.log(`Workspace distribution de entradas obtenidas:`, workspaceCounts);
+    console.log(`✅ Filtradas ${entries.length} entradas totales → ${filteredEntries.length} para workspace ${workspaceId}`);
+    
     return filteredEntries;
   } catch (error) {
     console.error(`Failed to fetch entries for ${startDate} to ${endDate}:`, error);

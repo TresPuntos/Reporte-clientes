@@ -153,6 +153,7 @@ export interface ApiKeyInfo {
 export interface ReportConfig {
   id: string;
   selectedApiKey: string;
+  selectedWorkspace?: number; // Workspace ID específico (opcional, por defecto usa el primero)
   selectedClient?: string;
   selectedProject?: string;
   selectedTag?: string;

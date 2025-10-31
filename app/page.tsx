@@ -27,8 +27,8 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-background py-10 px-4">
-      <div className="max-w-7xl mx-auto">
+    <main className="min-h-screen bg-background">
+      <div className="max-w-[1400px] mx-auto p-6 md:p-8 lg:p-12 space-y-8">
         {/* Header */}
         <div className="relative flex flex-col items-center mb-8">
           <div className="absolute top-0 right-0">
