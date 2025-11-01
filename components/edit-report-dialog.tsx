@@ -18,6 +18,7 @@ import {
 import { ShieldCheck } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 
 export default function EditReportDialog({ 
   report, 
@@ -398,72 +399,66 @@ export default function EditReportDialog({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card border border-border rounded-lg shadow-xl p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
         <h2 className="text-2xl font-bold mb-4">Editar Reporte</h2>
         
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">Nombre del Reporte</label>
-            <input
+            <Input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ej: Cliente ABC - Q1 2025"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg"
             />
           </div>
 
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">Total de Horas</label>
-              <input
+              <Input
                 type="number"
                 value={totalHours}
                 onChange={(e) => setTotalHours(Number(e.target.value))}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-2">Precio (€)</label>
-              <input
+              <Input
                 type="number"
                 step="0.01"
                 value={price}
                 onChange={(e) => setPrice(Number(e.target.value))}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg"
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium mb-2">Fecha de Inicio</label>
-              <input
+              <Input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg"
               />
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <input
-              type="checkbox"
+            <Checkbox
               id="isActive"
               checked={isActive}
-              onChange={(e) => setIsActive(e.target.checked)}
-              className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+              onCheckedChange={(checked) => setIsActive(!!checked)}
             />
-            <label htmlFor="isActive" className="text-sm font-medium text-gray-700">
+            <Label htmlFor="isActive" className="text-sm font-medium cursor-pointer">
               Reporte Activo (visible para el cliente)
-            </label>
+            </Label>
           </div>
 
           {/* Gestión de Contraseña */}
-          <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
+          <div className="p-4 bg-purple-50 dark:bg-purple-950/30 rounded-lg border border-purple-200 dark:border-purple-800">
             <div className="flex items-start gap-3">
-              <ShieldCheck className="w-5 h-5 text-purple-600 mt-0.5" />
+              <ShieldCheck className="w-5 h-5 text-purple-600 dark:text-purple-400 mt-0.5" />
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-3">
                   <Checkbox
@@ -471,29 +466,28 @@ export default function EditReportDialog({
                     checked={enableNewPassword}
                     onCheckedChange={(checked) => setEnableNewPassword(!!checked)}
                   />
-                  <Label htmlFor="enableNewPassword" className="text-sm font-medium text-purple-900 cursor-pointer">
+                  <Label htmlFor="enableNewPassword" className="text-sm font-medium text-purple-900 dark:text-purple-200 cursor-pointer">
                     {hasPassword ? 'Cambiar contraseña de acceso al reporte' : 'Proteger reporte con contraseña'}
                   </Label>
                 </div>
                 {hasPassword && !enableNewPassword && (
-                  <p className="text-xs text-purple-700 mb-3 ml-7">
+                  <p className="text-xs text-purple-700 dark:text-purple-300 mb-3 ml-7">
                     ✓ Este reporte está protegido con contraseña. Activa el checkbox para cambiarla.
                   </p>
                 )}
                 {enableNewPassword && (
                   <div className="space-y-3 mt-3 ml-7">
                     <div>
-                      <label className="block text-sm font-medium mb-2 text-purple-900">
+                      <label className="block text-sm font-medium mb-2 text-purple-900 dark:text-purple-200">
                         {hasPassword ? 'Nueva Contraseña' : 'Contraseña'}
                       </label>
-                      <input
+                      <Input
                         type="password"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                         placeholder="Contraseña segura"
-                        className="w-full px-4 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                       />
-                      <p className="text-xs text-purple-700 mt-1">
+                      <p className="text-xs text-purple-700 dark:text-purple-300 mt-1">
                         El cliente necesitará esta contraseña para ver el reporte.
                       </p>
                     </div>
@@ -504,8 +498,8 @@ export default function EditReportDialog({
           </div>
 
           {/* Gestión de Tags del Reporte */}
-          <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-            <p className="text-sm font-medium text-green-900 mb-3">Tags del Reporte</p>
+          <div className="p-4 bg-green-50 dark:bg-green-950/30 rounded-lg border border-green-200 dark:border-green-800">
+            <p className="text-sm font-medium text-green-900 dark:text-green-200 mb-3">Tags del Reporte</p>
             <ReportTagsManager
               reportTags={reportTags}
               activeTag={activeTag}
@@ -516,12 +510,12 @@ export default function EditReportDialog({
           </div>
 
           {/* Configuraciones de Toggl - Editable */}
-          <div className="p-4 bg-blue-50 rounded-lg">
+          <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
             <div className="flex justify-between items-center mb-3">
-              <p className="text-sm font-medium text-blue-900">Configuraciones de Toggl</p>
+              <p className="text-sm font-medium text-blue-900 dark:text-blue-200">Configuraciones de Toggl</p>
               <button
                 onClick={addConfig}
-                className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                className="px-3 py-1 bg-blue-600 dark:bg-blue-700 text-white rounded text-sm hover:bg-blue-700 dark:hover:bg-blue-600"
               >
                 + Añadir Configuración
               </button>
@@ -539,15 +533,15 @@ export default function EditReportDialog({
                 const availableTags = data.tags || [];
 
                 return (
-                  <div key={config.id} className="p-3 bg-white rounded border border-blue-200">
+                  <div key={config.id} className="p-3 bg-white dark:bg-card rounded border border-blue-200 dark:border-blue-800">
                     <div className="flex justify-between items-start mb-3">
-                      <p className="text-xs font-medium text-blue-900">
+                      <p className="text-xs font-medium text-blue-900 dark:text-blue-200">
                         Configuración {configs.indexOf(config) + 1}
                       </p>
                       {configs.length > 1 && (
                         <button
                           onClick={() => removeConfig(config.id)}
-                          className="text-xs text-red-600 hover:text-red-800"
+                          className="text-xs text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
                         >
                           Eliminar
                         </button>
@@ -560,7 +554,7 @@ export default function EditReportDialog({
                         <select
                           value={config.selectedApiKey}
                           onChange={(e) => updateConfig(config.id, { selectedApiKey: e.target.value, selectedWorkspace: undefined, selectedClient: undefined, selectedProject: undefined, selectedTags: undefined })}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                          className="w-full px-2 py-1 text-sm bg-background border border-input rounded text-foreground"
                         >
                           {apiKeys.map(key => (
                             <option key={key.id} value={key.id}>{key.fullname}</option>
@@ -574,7 +568,7 @@ export default function EditReportDialog({
                           <select
                             value={config.selectedWorkspace || apiKeyInfo.workspaces[0]?.id || ''}
                             onChange={(e) => updateConfig(config.id, { selectedWorkspace: e.target.value ? Number(e.target.value) : undefined })}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                            className="w-full px-2 py-1 text-sm bg-background border border-input rounded text-foreground"
                           >
                             {apiKeyInfo.workspaces.map((workspace: any) => (
                               <option key={workspace.id} value={workspace.id}>
@@ -582,7 +576,7 @@ export default function EditReportDialog({
                               </option>
                             ))}
                           </select>
-                          <p className="text-xs text-gray-500 mt-1">
+                          <p className="text-xs text-muted-foreground mt-1">
                             {config.selectedWorkspace ? `✓ Seleccionado: ${apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.name || config.selectedWorkspace}` : `⚠️ Por defecto usa: ${apiKeyInfo.workspaces[0]?.name || apiKeyInfo.workspaces[0]?.id}`}
                           </p>
                         </div>
@@ -593,7 +587,7 @@ export default function EditReportDialog({
                         <select
                           value={config.selectedClient || ''}
                           onChange={(e) => updateConfig(config.id, { selectedClient: e.target.value || undefined, selectedProject: undefined })}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                          className="w-full px-2 py-1 text-sm bg-background border border-input rounded text-foreground"
                         >
                           <option value="">Todos los clientes</option>
                           {availableClients.map(client => (
@@ -607,7 +601,7 @@ export default function EditReportDialog({
                         <select
                           value={config.selectedProject || ''}
                           onChange={(e) => updateConfig(config.id, { selectedProject: e.target.value || undefined })}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                          className="w-full px-2 py-1 text-sm bg-background border border-input rounded text-foreground"
                         >
                           <option value="">Todos los proyectos</option>
                           {availableProjects.map(project => (
@@ -622,14 +616,14 @@ export default function EditReportDialog({
               })}
             </div>
             
-            <p className="text-xs text-blue-600 mt-3">
+            <p className="text-xs text-blue-600 dark:text-blue-300 mt-3">
               ⚠️ Nota: Al modificar los filtros y guardar, las entradas del reporte se actualizarán automáticamente en la próxima actualización (cada 30 min) o al recargar el reporte.
             </p>
           </div>
 
-          <div className="p-4 bg-gray-50 rounded-lg">
-            <p className="text-sm font-medium text-gray-900 mb-1">Última Actualización</p>
-            <p className="text-xs text-gray-600">
+          <div className="p-4 bg-gray-50 dark:bg-muted rounded-lg">
+            <p className="text-sm font-medium mb-1">Última Actualización</p>
+            <p className="text-xs text-muted-foreground">
               {new Date(report.lastUpdated).toLocaleString('es-ES', { 
                 day: '2-digit', 
                 month: '2-digit', 
@@ -645,21 +639,21 @@ export default function EditReportDialog({
           <button
             onClick={handleRecalculate}
             disabled={loading}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-purple-600 dark:bg-purple-700 text-white rounded-lg hover:bg-purple-700 dark:hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? '🔄 Recalculando...' : '🔄 Recalcular Estadísticas'}
           </button>
           <div className="flex gap-3">
             <button
               onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 border border-border rounded-lg hover:bg-secondary"
             >
               Cancelar
             </button>
             <button
               onClick={handleSave}
               disabled={loading}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-6 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Guardando...' : 'Guardar Cambios'}
             </button>
