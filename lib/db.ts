@@ -528,6 +528,7 @@ export async function getApiUsageStats(apiKeyId: string): Promise<ApiUsageStats>
   try {
     // Obtener todas las llamadas en la última hora (ventana deslizante)
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const oneHourAgoISO = oneHourAgo.toISOString();
     
     const result = await sql`
       SELECT 
@@ -537,7 +538,7 @@ export async function getApiUsageStats(apiKeyId: string): Promise<ApiUsageStats>
         is_user_endpoint
       FROM api_usage_log
       WHERE api_key_id = ${apiKeyId}
-        AND timestamp >= ${oneHourAgo}
+        AND timestamp >= ${oneHourAgoISO}::timestamp
       ORDER BY timestamp ASC
     `;
     
@@ -604,10 +605,11 @@ export async function getApiUsageStats(apiKeyId: string): Promise<ApiUsageStats>
 export async function cleanupOldApiUsageLogs(): Promise<void> {
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const oneDayAgoISO = oneDayAgo.toISOString();
     
     await sql`
       DELETE FROM api_usage_log
-      WHERE timestamp < ${oneDayAgo}
+      WHERE timestamp < ${oneDayAgoISO}::timestamp
     `;
   } catch (error) {
     console.error('Error cleaning up old API usage logs:', error);
