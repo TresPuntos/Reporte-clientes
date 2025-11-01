@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import type { ApiKeyInfo } from '@/lib/types';
 import { getMe } from '@/lib/toggl';
 import { Card } from '@/components/ui/card';
-import TagSummaryCard from '@/components/tag-summary-card';
 
 export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (keys: ApiKeyInfo[]) => void }) {
   const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
@@ -228,9 +227,6 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
 
   return (
     <div className="space-y-6">
-      {/* Resumen de Tags */}
-      <TagSummaryCard apiKeys={apiKeys} />
-      
       <Card>
         <div className="p-6">
           <h2 className="text-2xl font-bold mb-6">Panel de Administración - Cuentas de Toggl</h2>
