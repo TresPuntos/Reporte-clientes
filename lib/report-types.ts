@@ -13,6 +13,7 @@ export interface ClientReport {
   publicUrl: string; // Token único para el link
   isActive: boolean;
   passwordHash?: string; // Hash de contraseña opcional para proteger el reporte
+  _passwordPlaintext?: string; // Campo temporal solo para envío, se elimina en el servidor
   configs: ReportConfig[];
   reportTags: ReportTag[]; // Tags del reporte con su estado
   activeTag?: string; // Tag actualmente activo

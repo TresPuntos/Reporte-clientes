@@ -76,14 +76,23 @@ export async function POST(request: NextRequest) {
     
     const report: ClientReport = await request.json();
     
+    // Si tiene contraseña en texto plano, hashearla
+    let finalReport = report;
+    if (report._passwordPlaintext) {
+      const { hashPassword } = await import('@/lib/auth');
+      const passwordHash = await hashPassword(report._passwordPlaintext);
+      finalReport = { ...report, passwordHash };
+      delete (finalReport as any)._passwordPlaintext;
+    }
+    
     console.log('Saving report:', { 
-      id: report.id, 
-      name: report.name, 
-      hasPublicUrl: !!report.publicUrl,
-      totalHours: report.totalHours 
+      id: finalReport.id, 
+      name: finalReport.name, 
+      hasPublicUrl: !!finalReport.publicUrl,
+      totalHours: finalReport.totalHours 
     });
     
-    await saveReportToDB(report);
+    await saveReportToDB(finalReport);
     
     console.log('Report saved successfully:', report.id);
     

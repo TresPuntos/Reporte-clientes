@@ -24,7 +24,6 @@ import { Clock, ShieldCheck } from 'lucide-react';
 import type { ReportTag } from '@/lib/report-types';
 import { getTogglMinDate, getTogglMinDateSync, shouldRefreshMinDate } from '@/lib/toggl-date-utils';
 import { toast } from '@/lib/toast';
-import { hashPassword } from '@/lib/auth';
 
 export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo[] }) {
   const [reportName, setReportName] = useState('');
@@ -524,12 +523,6 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
       const evolution = calculateConsumptionEvolution(allEntries);
       const cumulative = calculateCumulativeEvolution(evolution);
 
-      // Hash password if enabled
-      let passwordHash: string | undefined = undefined;
-      if (enablePassword && clientPassword) {
-        passwordHash = await hashPassword(clientPassword);
-      }
-
       const report: ClientReport = {
         id: crypto.randomUUID(),
         name: reportName,
@@ -540,7 +533,7 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
         lastUpdated: new Date().toISOString(),
         publicUrl: generatePublicUrl(),
         isActive: true,
-        passwordHash,
+        ...(enablePassword && clientPassword ? { _passwordPlaintext: clientPassword } : {}),
         configs,
         reportTags,
         activeTag,
