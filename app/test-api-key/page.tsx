@@ -88,13 +88,20 @@ export default function TestApiKeyPage() {
         setTimeout(async () => {
           const verifyResponse = await fetch('/api/api-keys');
           const verifyData = await verifyResponse.json();
-          setResult((prev: ResultType) => ({
-            ...prev,
-            verification: {
-              count: verifyData.length,
-              keys: verifyData.map((k: any) => ({ id: k.id, email: k.email })),
-            },
-          }));
+          setResult((prev: ResultType) => {
+            const base = prev || {
+              status: saveResponse.status,
+              ok: saveResponse.ok,
+              data: saveData,
+            };
+            return {
+              ...base,
+              verification: {
+                count: verifyData.length,
+                keys: verifyData.map((k: any) => ({ id: k.id, email: k.email })),
+              },
+            };
+          });
         }, 1000);
       }
     } catch (error: any) {
