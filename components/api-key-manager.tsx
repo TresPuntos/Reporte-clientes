@@ -22,24 +22,63 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
       const response = await fetch('/api/api-keys');
       if (response.ok) {
         const keys = await response.json();
-        setApiKeys(keys);
-        onApiKeysChange(keys);
-      } else {
-        // Fallback a localStorage si el servidor no está disponible (desarrollo)
-        const stored = localStorage.getItem('toggl_api_keys');
-        if (stored) {
-          try {
-            const keys = JSON.parse(stored);
-            setApiKeys(keys);
-            onApiKeysChange(keys);
-          } catch (error) {
-            console.error('Error loading API keys from localStorage:', error);
+        // Si hay keys en BD, usarlas (prioridad a BD)
+        if (keys && keys.length > 0) {
+          setApiKeys(keys);
+          onApiKeysChange(keys);
+          // Sincronizar localStorage con BD
+          localStorage.setItem('toggl_api_keys', JSON.stringify(keys));
+          return;
+        }
+      }
+      
+      // Si BD está vacía, intentar migrar desde localStorage
+      const stored = localStorage.getItem('toggl_api_keys');
+      if (stored) {
+        try {
+          const localKeys = JSON.parse(stored);
+          if (localKeys.length > 0) {
+            console.log('Migrando API keys desde localStorage a BD...');
+            // Migrar cada key a BD
+            for (const key of localKeys) {
+              try {
+                await fetch('/api/api-keys', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    id: key.id,
+                    key: key.key,
+                    fullname: key.fullname,
+                    email: key.email,
+                    workspaces: key.workspaces || [],
+                    clients: key.clients || [],
+                    projects: key.projects || [],
+                    tags: key.tags || [],
+                  }),
+                });
+              } catch (error) {
+                console.error('Error migrating key:', error);
+              }
+            }
+            // Recargar desde BD
+            const refreshedResponse = await fetch('/api/api-keys');
+            if (refreshedResponse.ok) {
+              const refreshedKeys = await refreshedResponse.json();
+              setApiKeys(refreshedKeys);
+              onApiKeysChange(refreshedKeys);
+              return;
+            }
           }
+          // Si no se pudo migrar, usar localStorage como fallback
+          setApiKeys(localKeys);
+          onApiKeysChange(localKeys);
+        } catch (error) {
+          console.error('Error loading API keys from localStorage:', error);
         }
       }
     } catch (error) {
       console.error('Error loading API keys from server:', error);
-      // Fallback a localStorage
+      // Fallback a localStorage solo si hay error de conexión
       const stored = localStorage.getItem('toggl_api_keys');
       if (stored) {
         try {
