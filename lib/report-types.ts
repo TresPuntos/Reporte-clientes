@@ -89,14 +89,25 @@ async function fetchFromServer<T>(url: string, options?: RequestInit): Promise<T
 
 export async function saveReport(report: ClientReport): Promise<void> {
   try {
-    // Intentar guardar en el servidor
-    await fetchFromServer('/api/reports', {
+    // Intentar guardar en el servidor (base de datos)
+    const response = await fetch('/api/reports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(report),
     });
-    
-    // También guardar en localStorage como backup
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Error saving report to server:', errorData);
+      throw new Error(`Error al guardar: ${errorData.message || 'Error desconocido'}`);
+    }
+
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error('El servidor no confirmó el guardado');
+    }
+
+    // También guardar en localStorage como backup/cache local
     if (typeof window !== 'undefined') {
       const reports = await getAllReports();
       const index = reports.findIndex(r => r.id === report.id);
@@ -106,8 +117,8 @@ export async function saveReport(report: ClientReport): Promise<void> {
       localStorage.setItem('client_reports', JSON.stringify(updatedReports));
     }
   } catch (error) {
-    console.error('Error saving report to server, using localStorage fallback:', error);
-    // Fallback a localStorage si el servidor falla
+    console.error('Error saving report to server:', error);
+    // Si el servidor falla, intentar localStorage como último recurso
     if (typeof window !== 'undefined') {
       const reports = await getAllReports();
       const index = reports.findIndex(r => r.id === report.id);
@@ -115,6 +126,8 @@ export async function saveReport(report: ClientReport): Promise<void> {
         ? reports.map((r, i) => i === index ? report : r)
         : [...reports, report];
       localStorage.setItem('client_reports', JSON.stringify(updatedReports));
+      // Lanzar error para que el usuario sepa que no se guardó en BD
+      throw new Error('No se pudo guardar en la base de datos. Los datos están solo localmente.');
     } else {
       throw error;
     }

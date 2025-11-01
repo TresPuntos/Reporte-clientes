@@ -101,7 +101,7 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
       
       // Guardar en BD
       try {
-        await fetch('/api/api-keys', {
+        const saveResponse = await fetch('/api/api-keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -115,12 +115,23 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
             tags: newKeyInfo.tags,
           }),
         });
+
+        if (!saveResponse.ok) {
+          const errorData = await saveResponse.json().catch(() => ({}));
+          console.error('Error saving API key:', errorData);
+          setError('Error al guardar en la base de datos. Intenta de nuevo.');
+          return;
+        }
+
+        // Verificar que se guardó correctamente recargando
+        await loadApiKeys();
       } catch (error) {
         console.error('Error saving API key to server:', error);
-        // Continuar aunque falle, al menos queda en el estado
+        setError('Error de conexión al guardar. Intenta de nuevo.');
+        return;
       }
       
-      saveApiKeys(updatedKeys);
+      // Ya se recargó en loadApiKeys(), solo limpiar el input
       setNewApiKey('');
       setError(null);
     } catch (err) {
@@ -134,16 +145,22 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
   const handleRemoveApiKey = async (id: string) => {
     // Eliminar de BD
     try {
-      await fetch(`/api/api-keys?id=${id}`, {
+      const deleteResponse = await fetch(`/api/api-keys?id=${id}`, {
         method: 'DELETE',
       });
+
+      if (!deleteResponse.ok) {
+        console.error('Error deleting API key:', await deleteResponse.json().catch(() => ({})));
+        alert('Error al eliminar. Intenta de nuevo.');
+        return;
+      }
+
+      // Recargar desde BD
+      await loadApiKeys();
     } catch (error) {
       console.error('Error deleting API key from server:', error);
-      // Continuar aunque falle
+      alert('Error de conexión al eliminar. Intenta de nuevo.');
     }
-    
-    const updatedKeys = apiKeys.filter(key => key.id !== id);
-    saveApiKeys(updatedKeys);
   };
 
   return (
