@@ -1,4 +1,5 @@
 import { sql } from '@vercel/postgres';
+// Nota: @vercel/postgres también funciona con Neon y otros proveedores Postgres compatibles
 import type { ClientReport } from './report-types';
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'crypto';
 import { promisify } from 'util';

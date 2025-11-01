@@ -13,7 +13,7 @@ Tu aplicación funciona pero:
 
 ## ✅ SOLUCIÓN: Pasos para Conectar la BD
 
-### PASO 1: Crear Base de Datos Postgres en Vercel
+### PASO 1: Crear Base de Datos Postgres en Vercel (usando Marketplace)
 
 1. **Ve a tu proyecto en Vercel:**
    - https://vercel.com/dashboard
@@ -21,37 +21,39 @@ Tu aplicación funciona pero:
 
 2. **Navega a Storage:**
    - Click en la pestaña **"Storage"** (en el menú lateral)
-   - O ve directamente: Click en **"Create"** → **"Database"**
+   - Click en **"Create Database"**
 
-3. **Crear Postgres:**
-   - Selecciona **"Postgres"**
-   - Nombre: `reporte-clientes-db` (o el que prefieras)
-   - Región: **Europe West** (o la más cercana a ti)
-   - Click en **"Create"**
+3. **Seleccionar del Marketplace:**
+   - Verás varias opciones, busca la sección **"Marketplace Database Providers"**
+   - Click en **"Neon"** (la opción que dice "Serverless Postgres")
+   - Click en la flecha o en el botón para continuar
 
-4. **Espera a que se cree** (1-2 minutos)
+4. **Configurar Neon:**
+   - Te llevará a la configuración de Neon
+   - Sigue las instrucciones para crear una cuenta (si no tienes) o conectar tu cuenta existente
+   - Acepta los términos y conecta
+
+5. **Espera a que se configure** (1-2 minutos)
 
 ---
 
 ### PASO 2: Conectar la BD a tu Proyecto
 
-**Opción A: Desde el Dashboard de Storage**
+**Cuando conectes Neon, automáticamente:**
+1. Neon te preguntará a qué proyecto conectar la BD
+2. Selecciona **"Reporte-clientes"**
+3. Neon añadirá automáticamente las variables de entorno necesarias
 
-1. En la página de la base de datos que acabas de crear
-2. Verás un botón **"Connect to Project"** o similar
-3. Selecciona tu proyecto **"Reporte-clientes"**
-4. Click en **"Connect"**
+**Verificar Variables de Entorno:**
 
-**Opción B: Manualmente en Settings**
+1. En tu proyecto Vercel → **"Settings"** → **"Environment Variables"**
+2. Después de conectar Neon, deberías ver automáticamente:
+   - `POSTGRES_URL` (o `DATABASE_URL` dependiendo de Neon)
+   - `POSTGRES_PRISMA_URL` (si aplica)
+   - `POSTGRES_URL_NON_POOLING` (si aplica)
 
-1. En tu proyecto Vercel → **"Settings"**
-2. Ve a **"Environment Variables"**
-3. Verifica que existan estas variables (Vercel las añade automáticamente):
-   - `POSTGRES_URL`
-   - `POSTGRES_PRISMA_URL`
-   - `POSTGRES_URL_NON_POOLING`
-
-4. Si no están, ve a tu BD en Storage → **"Settings"** → Copia las variables y añádelas manualmente
+3. **Si usas Neon**, la variable puede llamarse `DATABASE_URL` en lugar de `POSTGRES_URL`
+4. Si falta alguna, Neon te las mostrará en su dashboard para copiarlas manualmente
 
 ---
 
