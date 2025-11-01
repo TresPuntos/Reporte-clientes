@@ -1,9 +1,9 @@
-import { NextResponse } from 'next/server';
-import { sql } from '@vercel/postgres';
+// Script para migrar la base de datos - Agregar columna password_hash
+const { sql } = require('@vercel/postgres');
 
-export async function POST() {
+async function migrateDatabase() {
   try {
-    console.log('🔄 Starting database migration...');
+    console.log('🔄 Migrating database...');
     
     // Verificar si la columna existe
     console.log('Checking if password_hash column exists...');
@@ -15,7 +15,7 @@ export async function POST() {
         ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)
       `;
       console.log('✅ Column password_hash added successfully');
-    } catch (error: any) {
+    } catch (error) {
       if (error.message && error.message.includes('already exists')) {
         console.log('✅ Column password_hash already exists');
       } else {
@@ -24,13 +24,12 @@ export async function POST() {
     }
     
     console.log('✅ Migration completed successfully');
-    
-    return NextResponse.json({ success: true, message: 'Migration completed' });
-  } catch (error: any) {
+    process.exit(0);
+  } catch (error) {
     console.error('❌ Migration failed:', error.message);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
+    process.exit(1);
   }
 }
+
+migrateDatabase();
+
