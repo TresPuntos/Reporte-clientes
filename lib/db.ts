@@ -158,8 +158,7 @@ export async function saveReportToDB(report: ClientReport): Promise<void> {
         last_updated = EXCLUDED.last_updated,
         is_active = EXCLUDED.is_active,
         active_tag = EXCLUDED.active_tag,
-        data = EXCLUDED.data,
-        updated_at = CURRENT_TIMESTAMP
+        data = EXCLUDED.data
     `;
     
     console.log('Report saved to database successfully:', report.id);
