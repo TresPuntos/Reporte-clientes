@@ -4,9 +4,26 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
+type ResultType = {
+  status?: number;
+  ok?: boolean;
+  data?: any;
+  verification?: {
+    count: number;
+    keys: Array<{ id: string; email: string }>;
+  };
+  check?: {
+    status: number;
+    count: number;
+    keys: Array<{ id: string; email: string; fullname: string }>;
+  };
+  error?: string;
+  stack?: string;
+} | null;
+
 export default function TestApiKeyPage() {
   const [testKey, setTestKey] = useState('');
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<ResultType>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const testSave = async () => {
@@ -71,7 +88,7 @@ export default function TestApiKeyPage() {
         setTimeout(async () => {
           const verifyResponse = await fetch('/api/api-keys');
           const verifyData = await verifyResponse.json();
-          setResult(prev => ({
+          setResult((prev: ResultType) => ({
             ...prev,
             verification: {
               count: verifyData.length,
