@@ -25,6 +25,13 @@ async function ensureDBInitialized() {
 export async function GET() {
   try {
     await ensureDBInitialized();
+    
+    // Verificar conexión antes de continuar
+    if (!process.env.POSTGRES_URL && !process.env.DATABASE_URL) {
+      console.warn('No database configured, returning empty array');
+      return NextResponse.json([]);
+    }
+    
     const apiKeysDB = await getAllApiKeysFromDB();
     
     // Convertir a formato ApiKeyInfo (descifrando las claves)
@@ -45,10 +52,20 @@ export async function GET() {
     const apiKeys = await Promise.all(apiKeysPromises);
     
     return NextResponse.json(apiKeys);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching API keys:', error);
+    
+    // Si no hay BD configurada, retornar array vacío (no es error crítico)
+    if (error.message?.includes('POSTGRES_URL') || error.message?.includes('DATABASE_URL')) {
+      console.warn('Database not configured, returning empty array');
+      return NextResponse.json([]);
+    }
+    
     return NextResponse.json(
-      { message: 'Error fetching API keys' },
+      { 
+        message: 'Error fetching API keys',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      },
       { status: 500 }
     );
   }

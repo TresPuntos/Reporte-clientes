@@ -1,5 +1,6 @@
 import { sql } from '@vercel/postgres';
 // Nota: @vercel/postgres también funciona con Neon y otros proveedores Postgres compatibles
+// Asegúrate de tener POSTGRES_URL o DATABASE_URL en variables de entorno
 import type { ClientReport } from './report-types';
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'crypto';
 import { promisify } from 'util';
@@ -8,6 +9,14 @@ const scryptAsync = promisify(scrypt);
 
 // Inicializar tablas si no existen
 export async function initializeDatabase() {
+  // Verificar que tenemos conexión a BD
+  if (!process.env.POSTGRES_URL && !process.env.DATABASE_URL) {
+    throw new Error(
+      'POSTGRES_URL o DATABASE_URL no está configurada. ' +
+      'Por favor, conecta una base de datos en Vercel (Neon, Supabase, etc.)'
+    );
+  }
+
   try {
     // Tabla de reportes
     await sql`
