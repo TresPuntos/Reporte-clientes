@@ -157,15 +157,15 @@ export async function saveReportToDB(report: ClientReport): Promise<void> {
         ${report.name},
         ${report.packageId || null},
         ${report.totalHours},
-        ${report.price || null},
+        ${(report as any).price || null},
         ${report.startDate},
-        ${report.endDate || null},
+        ${(report as any).endDate || null},
         ${report.createdAt},
         ${report.lastUpdated},
         ${report.publicUrl},
         ${report.isActive !== undefined ? report.isActive : true},
-        ${report.activeTag || null},
-        ${report.passwordHash || null},
+        ${(report as any).activeTag || null},
+        ${(report as any).passwordHash || null},
         ${JSON.stringify(report)}::jsonb
       )
       ON CONFLICT (id) 
