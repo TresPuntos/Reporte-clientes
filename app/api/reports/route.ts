@@ -40,14 +40,48 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await ensureDBInitialized();
+    
+    // Verificar que la BD esté configurada
+    if (!process.env.POSTGRES_URL && !process.env.DATABASE_URL) {
+      console.error('No database configured');
+      return NextResponse.json(
+        { 
+          success: false,
+          message: 'Base de datos no configurada. Por favor, conecta una base de datos en Vercel.' 
+        },
+        { status: 500 }
+      );
+    }
+    
     const report: ClientReport = await request.json();
     
+    console.log('Saving report:', { 
+      id: report.id, 
+      name: report.name, 
+      hasPublicUrl: !!report.publicUrl,
+      totalHours: report.totalHours 
+    });
+    
     await saveReportToDB(report);
+    
+    console.log('Report saved successfully:', report.id);
+    
     return NextResponse.json({ success: true, report });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error saving report:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code
+    });
+    
     return NextResponse.json(
-      { message: 'Error saving report' },
+      { 
+        success: false,
+        message: 'Error saving report',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor'
+      },
       { status: 500 }
     );
   }

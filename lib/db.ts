@@ -109,7 +109,26 @@ export async function getReportByPublicUrlFromDB(publicUrl: string): Promise<Cli
 
 export async function saveReportToDB(report: ClientReport): Promise<void> {
   try {
-    await sql`
+    console.log('saveReportToDB called:', { 
+      id: report.id, 
+      name: report.name,
+      publicUrl: report.publicUrl,
+      totalHours: report.totalHours 
+    });
+    
+    // Verificar que tenemos conexión a BD
+    if (!process.env.POSTGRES_URL && !process.env.DATABASE_URL) {
+      throw new Error('POSTGRES_URL o DATABASE_URL no está configurada');
+    }
+    
+    // Validar que el reporte tenga los campos requeridos
+    if (!report.id || !report.name || !report.publicUrl) {
+      throw new Error(`Reporte inválido: faltan campos requeridos (id: ${!!report.id}, name: ${!!report.name}, publicUrl: ${!!report.publicUrl})`);
+    }
+    
+    console.log('Inserting report into database...');
+    
+    const result = await sql`
       INSERT INTO reports (
         id, name, package_id, total_hours, price, start_date, end_date,
         created_at, last_updated, public_url, is_active, active_tag, data
@@ -124,7 +143,7 @@ export async function saveReportToDB(report: ClientReport): Promise<void> {
         ${report.createdAt},
         ${report.lastUpdated},
         ${report.publicUrl},
-        ${report.isActive},
+        ${report.isActive !== undefined ? report.isActive : true},
         ${report.activeTag || null},
         ${JSON.stringify(report)}::jsonb
       )
@@ -142,8 +161,16 @@ export async function saveReportToDB(report: ClientReport): Promise<void> {
         data = EXCLUDED.data,
         updated_at = CURRENT_TIMESTAMP
     `;
-  } catch (error) {
+    
+    console.log('Report saved to database successfully:', report.id);
+  } catch (error: any) {
     console.error('Error saving report to database:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code
+    });
     throw error;
   }
 }
