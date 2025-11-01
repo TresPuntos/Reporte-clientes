@@ -141,15 +141,55 @@ export async function getAllReports(): Promise<ClientReport[]> {
   }
   
   try {
-    // Intentar obtener del servidor
-    const reports = await fetchFromServer<ClientReport[]>('/api/reports');
+    // Intentar obtener del servidor (BD) primero
+    const response = await fetch('/api/reports');
+    if (response.ok) {
+      const reports = await response.json();
+      // Si hay reportes en BD, usarlos y sincronizar localStorage
+      if (reports && reports.length > 0) {
+        localStorage.setItem('client_reports', JSON.stringify(reports));
+        return reports;
+      }
+    }
     
-    // Sincronizar con localStorage
-    localStorage.setItem('client_reports', JSON.stringify(reports));
-    return reports;
+    // Si BD está vacía, intentar migrar desde localStorage
+    const stored = localStorage.getItem('client_reports');
+    if (stored) {
+      try {
+        const localReports = JSON.parse(stored);
+        if (localReports.length > 0) {
+          console.log('Migrando reportes desde localStorage a BD...');
+          // Migrar cada reporte a BD
+          for (const report of localReports) {
+            try {
+              await fetch('/api/reports', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(report),
+              });
+            } catch (error) {
+              console.error('Error migrating report:', error);
+            }
+          }
+          // Recargar desde BD
+          const refreshedResponse = await fetch('/api/reports');
+          if (refreshedResponse.ok) {
+            const refreshedReports = await refreshedResponse.json();
+            return refreshedReports;
+          }
+          // Si falla, devolver los locales
+          return localReports;
+        }
+      } catch (error) {
+        console.error('Error parsing localStorage reports:', error);
+      }
+    }
+    
+    // Si no hay nada, retornar array vacío
+    return [];
   } catch (error) {
     console.error('Error fetching reports from server, using localStorage fallback:', error);
-    // Fallback a localStorage
+    // Fallback a localStorage solo si hay error de conexión
     const stored = localStorage.getItem('client_reports');
     return stored ? JSON.parse(stored) : [];
   }
