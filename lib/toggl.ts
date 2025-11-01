@@ -6,7 +6,7 @@ const TOGGL_BASE_URL = 'https://api.track.toggl.com/api/v9';
  * Core function to fetch data from Toggl API through proxy
  * This avoids CORS issues by using our backend proxy
  */
-async function togglFetch<T>(
+export async function togglFetch<T>(
   apiKey: string,
   endpoint: string,
   params?: Record<string, string>
