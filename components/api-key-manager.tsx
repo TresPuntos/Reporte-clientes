@@ -140,6 +140,8 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
       
       // Guardar en BD
       try {
+        console.log('Enviando API key al servidor...', { id: newKeyInfo.id, email: newKeyInfo.email });
+        
         const saveResponse = await fetch('/api/api-keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -148,25 +150,46 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
             key: newKeyInfo.key,
             fullname: newKeyInfo.fullname,
             email: newKeyInfo.email,
-            workspaces: newKeyInfo.workspaces,
-            clients: newKeyInfo.clients,
-            projects: newKeyInfo.projects,
-            tags: newKeyInfo.tags,
+            workspaces: newKeyInfo.workspaces || [],
+            clients: newKeyInfo.clients || [],
+            projects: newKeyInfo.projects || [],
+            tags: newKeyInfo.tags || [],
           }),
         });
 
+        const responseData = await saveResponse.json().catch(() => ({}));
+        
         if (!saveResponse.ok) {
-          const errorData = await saveResponse.json().catch(() => ({}));
-          console.error('Error saving API key:', errorData);
-          setError('Error al guardar en la base de datos. Intenta de nuevo.');
+          console.error('Error response from server:', responseData);
+          const errorMessage = responseData.message || 'Error al guardar en la base de datos';
+          setError(`${errorMessage}. Intenta de nuevo.`);
           return;
         }
 
+        if (!responseData.success) {
+          console.error('Server returned success:false', responseData);
+          setError(responseData.message || 'Error al guardar en la base de datos');
+          return;
+        }
+
+        console.log('API key guardada exitosamente:', responseData);
+
         // Verificar que se guardó correctamente recargando
         await loadApiKeys();
+        
+        // Verificar una vez más que se cargó
+        const verifyResponse = await fetch('/api/api-keys');
+        if (verifyResponse.ok) {
+          const verifyKeys = await verifyResponse.json();
+          console.log('API keys después de guardar:', verifyKeys.length);
+          if (verifyKeys.length === 0) {
+            setError('⚠️ La API key se guardó pero no se pudo verificar. Recarga la página.');
+          }
+        }
       } catch (error) {
         console.error('Error saving API key to server:', error);
-        setError('Error de conexión al guardar. Intenta de nuevo.');
+        const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
+        setError(`Error de conexión: ${errorMessage}. Intenta de nuevo.`);
         return;
       }
       

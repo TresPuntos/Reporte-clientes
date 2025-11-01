@@ -75,12 +75,31 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await ensureDBInitialized();
+    
+    // Verificar que la BD esté configurada
+    if (!process.env.POSTGRES_URL && !process.env.DATABASE_URL) {
+      console.error('No database configured');
+      return NextResponse.json(
+        { 
+          success: false,
+          message: 'Base de datos no configurada. Por favor, conecta una base de datos en Vercel.' 
+        },
+        { status: 500 }
+      );
+    }
+    
     const body = await request.json();
     const { id, key, fullname, email, workspaces, clients, projects, tags } = body;
     
+    console.log('Saving API key:', { id, email, hasKey: !!key, hasFullname: !!fullname });
+    
     if (!id || !key || !fullname || !email) {
+      console.error('Missing required fields:', { id: !!id, key: !!key, fullname: !!fullname, email: !!email });
       return NextResponse.json(
-        { message: 'Missing required fields' },
+        { 
+          success: false,
+          message: 'Faltan campos requeridos: id, key, fullname, email' 
+        },
         { status: 400 }
       );
     }
@@ -96,11 +115,31 @@ export async function POST(request: NextRequest) {
       tags || []
     );
     
-    return NextResponse.json({ success: true });
-  } catch (error) {
+    console.log('API key saved successfully:', id);
+    
+    // Verificar que se guardó correctamente
+    const allKeys = await getAllApiKeysFromDB();
+    console.log(`Total API keys in DB after save: ${allKeys.length}`);
+    
+    return NextResponse.json({ 
+      success: true,
+      message: 'API key guardada correctamente',
+      totalKeys: allKeys.length
+    });
+  } catch (error: any) {
     console.error('Error saving API key:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
     return NextResponse.json(
-      { message: 'Error saving API key' },
+      { 
+        success: false,
+        message: 'Error al guardar API key',
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor'
+      },
       { status: 500 }
     );
   }

@@ -222,10 +222,22 @@ export async function saveApiKeyToDB(
   tags: any[]
 ): Promise<void> {
   try {
+    console.log('saveApiKeyToDB called:', { id, email, hasKey: !!key });
+    
+    // Verificar que tenemos conexión a BD
+    if (!process.env.POSTGRES_URL && !process.env.DATABASE_URL) {
+      throw new Error('POSTGRES_URL o DATABASE_URL no está configurada');
+    }
+    
+    console.log('Encrypting API key...');
     const encrypted = await encrypt(key);
+    console.log('API key encrypted successfully');
+    
     const keyHash = Buffer.from(key).toString('base64'); // Hash simple para verificación
     
-    await sql`
+    console.log('Inserting into database...', { id, email });
+    
+    const result = await sql`
       INSERT INTO api_keys (
         id, key_hash, key_encrypted, fullname, email, 
         workspaces, clients, projects, tags
@@ -252,8 +264,16 @@ export async function saveApiKeyToDB(
         tags = EXCLUDED.tags,
         updated_at = CURRENT_TIMESTAMP
     `;
-  } catch (error) {
+    
+    console.log('API key saved to database successfully:', id);
+  } catch (error: any) {
     console.error('Error saving API key to database:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      code: error.code
+    });
     throw error;
   }
 }
