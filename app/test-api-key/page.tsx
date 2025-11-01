@@ -20,10 +20,13 @@ export default function TestApiKeyPage() {
 
     try {
       // Primero validar la key con Toggl
-      const togglResponse = await fetch('/api/toggl/me', {
+      const togglResponse = await fetch('/api/toggl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: testKey }),
+        body: JSON.stringify({ 
+          apiKey: testKey,
+          endpoint: '/me'
+        }),
       });
 
       if (!togglResponse.ok) {
@@ -33,7 +36,11 @@ export default function TestApiKeyPage() {
         return;
       }
 
-      const userData = await togglResponse.json();
+      const meData = await togglResponse.json();
+      
+      // Obtener datos completos usando getMe (que trae workspaces, clients, etc.)
+      const { getMe } = await import('@/lib/toggl');
+      const userData = await getMe(testKey);
 
       // Intentar guardar
       const saveResponse = await fetch('/api/api-keys', {
