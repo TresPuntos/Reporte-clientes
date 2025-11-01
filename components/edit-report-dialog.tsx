@@ -15,6 +15,9 @@ import {
   calculateConsumptionEvolution,
   calculateCumulativeEvolution,
 } from '@/lib/report-calculations';
+import { ShieldCheck } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 
 export default function EditReportDialog({ 
   report, 
@@ -38,6 +41,11 @@ export default function EditReportDialog({
   const [reportTags, setReportTags] = useState(report.reportTags || []);
   const [activeTag, setActiveTag] = useState(report.activeTag);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
+  
+  // Password management states
+  const [hasPassword, setHasPassword] = useState(!!report.passwordHash);
+  const [newPassword, setNewPassword] = useState('');
+  const [enableNewPassword, setEnableNewPassword] = useState(false);
 
   // Cargar datos disponibles de Toggl para cada API key
   useEffect(() => {
@@ -230,6 +238,11 @@ export default function EditReportDialog({
         lastUpdated: new Date().toISOString(),
       };
 
+      // Add new password if provided
+      if (enableNewPassword && newPassword) {
+        (updatedReport as any)._passwordPlaintext = newPassword;
+      }
+
       await saveReport(updatedReport);
       onUpdated();
       onClose();
@@ -367,6 +380,11 @@ export default function EditReportDialog({
         lastUpdated: new Date().toISOString(),
       };
 
+      // Add new password if provided
+      if (enableNewPassword && newPassword) {
+        (updatedReport as any)._passwordPlaintext = newPassword;
+      }
+
       await saveReport(updatedReport);
       alert('✓ Reporte recalculado y actualizado exitosamente con los nuevos filtros!');
       onUpdated();
@@ -440,6 +458,49 @@ export default function EditReportDialog({
             <label htmlFor="isActive" className="text-sm font-medium text-gray-700">
               Reporte Activo (visible para el cliente)
             </label>
+          </div>
+
+          {/* Gestión de Contraseña */}
+          <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-purple-600 mt-0.5" />
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-3">
+                  <Checkbox
+                    id="enableNewPassword"
+                    checked={enableNewPassword}
+                    onCheckedChange={(checked) => setEnableNewPassword(!!checked)}
+                  />
+                  <Label htmlFor="enableNewPassword" className="text-sm font-medium text-purple-900 cursor-pointer">
+                    {hasPassword ? 'Cambiar contraseña de acceso al reporte' : 'Proteger reporte con contraseña'}
+                  </Label>
+                </div>
+                {hasPassword && !enableNewPassword && (
+                  <p className="text-xs text-purple-700 mb-3 ml-7">
+                    ✓ Este reporte está protegido con contraseña. Activa el checkbox para cambiarla.
+                  </p>
+                )}
+                {enableNewPassword && (
+                  <div className="space-y-3 mt-3 ml-7">
+                    <div>
+                      <label className="block text-sm font-medium mb-2 text-purple-900">
+                        {hasPassword ? 'Nueva Contraseña' : 'Contraseña'}
+                      </label>
+                      <input
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Contraseña segura"
+                        className="w-full px-4 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      />
+                      <p className="text-xs text-purple-700 mt-1">
+                        El cliente necesitará esta contraseña para ver el reporte.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Gestión de Tags del Reporte */}
