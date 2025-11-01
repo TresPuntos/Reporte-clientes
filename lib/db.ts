@@ -527,8 +527,8 @@ export async function logApiUsage(
 export async function getApiUsageStats(apiKeyId: string): Promise<ApiUsageStats> {
   try {
     // Obtener todas las llamadas en la última hora (ventana deslizante)
-    const oneHourAgoMs = Date.now() - 60 * 60 * 1000;
-    const oneHourAgoISO = new Date(oneHourAgoMs).toISOString();
+    // Crear string ISO directamente sin pasar por Date object
+    const oneHourAgoISO: string = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     
     const result = await sql`
       SELECT 
@@ -604,8 +604,8 @@ export async function getApiUsageStats(apiKeyId: string): Promise<ApiUsageStats>
  */
 export async function cleanupOldApiUsageLogs(): Promise<void> {
   try {
-    const oneDayAgoMs = Date.now() - 24 * 60 * 60 * 1000;
-    const oneDayAgoISO = new Date(oneDayAgoMs).toISOString();
+    // Crear string ISO directamente con anotación de tipo
+    const oneDayAgoISO: string = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     
     await sql`
       DELETE FROM api_usage_log
