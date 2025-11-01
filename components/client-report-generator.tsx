@@ -17,10 +17,14 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import ReportTagsManager from '@/components/report-tags-manager';
+import { Clock, ShieldCheck } from 'lucide-react';
 import type { ReportTag } from '@/lib/report-types';
 import { getTogglMinDate, getTogglMinDateSync, shouldRefreshMinDate } from '@/lib/toggl-date-utils';
 import { toast } from '@/lib/toast';
+import { hashPassword } from '@/lib/auth';
 
 export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo[] }) {
   const [reportName, setReportName] = useState('');
@@ -37,6 +41,45 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
   const [reportTags, setReportTags] = useState<ReportTag[]>([]);
   const [activeTag, setActiveTag] = useState<string | undefined>(undefined);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
+  
+  // Password protection for client report
+  const [enablePassword, setEnablePassword] = useState(false);
+  const [clientEmail, setClientEmail] = useState('');
+  const [clientPassword, setClientPassword] = useState('');
+  
+  // API limit state
+  const [apiLimitInfo, setApiLimitInfo] = useState<{ resetTime: number; resetMinutes: number } | null>(null);
+  
+  // Check API limit status
+  useEffect(() => {
+    const checkApiLimit = () => {
+      const apiLimitData = localStorage.getItem('toggl_api_limit');
+      if (apiLimitData) {
+        try {
+          const limitInfo = JSON.parse(apiLimitData);
+          const resetTime = limitInfo.resetTime || 0;
+          const now = Date.now();
+          
+          if (resetTime > now) {
+            const resetSeconds = Math.ceil((resetTime - now) / 1000);
+            const resetMinutes = Math.ceil(resetSeconds / 60);
+            setApiLimitInfo({ resetTime, resetMinutes });
+          } else {
+            setApiLimitInfo(null);
+          }
+        } catch (error) {
+          setApiLimitInfo(null);
+        }
+      } else {
+        setApiLimitInfo(null);
+      }
+    };
+    
+    checkApiLimit();
+    // Verificar cada minuto
+    const interval = setInterval(checkApiLimit, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Set default date to the earliest allowed date by Toggl API (actualizado automáticamente)
   useEffect(() => {
@@ -323,60 +366,142 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
         console.warn(`Fecha de inicio ${startDate} es anterior a la fecha mínima de Toggl (${effectiveMinDate}). Usando ${effectiveMinDate} en su lugar.`);
       }
       
+      console.log(`Iniciando obtención de entradas de Toggl. Total configuraciones: ${configs.length}`);
+      
       for (const config of configs) {
         const apiKeyInfo = apiKeys.find(k => k.id === config.selectedApiKey);
-        if (!apiKeyInfo) continue;
+        if (!apiKeyInfo) {
+          console.warn(`⚠️ API key no encontrada para config ${config.id}`);
+          continue;
+        }
 
         // Usar el workspace seleccionado en la configuración, o el primero si no está especificado
         const workspaceId = config.selectedWorkspace 
           ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
           : apiKeyInfo.workspaces[0]?.id;
         if (!workspaceId) {
-          console.warn(`[${apiKeyInfo.fullname}] Workspace ID no encontrado`);
+          console.warn(`[${apiKeyInfo.fullname}] ⚠️ Workspace ID no encontrado`);
           continue;
         }
         
         const workspaceName = apiKeyInfo.workspaces.find((w: any) => w.id === workspaceId)?.name || 'sin nombre';
         console.log(`[${apiKeyInfo.fullname}] ✅ Obteniendo entradas desde ${effectiveStartDate} hasta ${currentDate}... Workspace: ${workspaceId} (${workspaceName})`);
-        const entries = await getTimeEntries(apiKeyInfo.key, effectiveStartDate, currentDate, workspaceId);
-        console.log(`[${apiKeyInfo.fullname}] Total entradas obtenidas: ${entries.length}`);
+        
+        try {
+          const entries = await getTimeEntries(apiKeyInfo.key, effectiveStartDate, currentDate, workspaceId);
+          console.log(`[${apiKeyInfo.fullname}] ✅ Total entradas obtenidas de Toggl: ${entries.length}`);
 
-        let filtered = entries;
-        if (config.selectedClient) {
-          filtered = filtered.filter(entry => {
+          let filtered = entries;
+          const initialCount = filtered.length;
+          
+          if (config.selectedClient) {
+            filtered = filtered.filter(entry => {
+              const project = apiKeyInfo.projects.find(p => p.id === entry.pid);
+              return project && project.cid === Number(config.selectedClient);
+            });
+            console.log(`[${apiKeyInfo.fullname}] Después de filtrar por cliente: ${filtered.length} de ${initialCount}`);
+          }
+          if (config.selectedProject) {
+            const beforeProjectFilter = filtered.length;
+            filtered = filtered.filter(entry => entry.pid === Number(config.selectedProject));
+            console.log(`[${apiKeyInfo.fullname}] Después de filtrar por proyecto: ${filtered.length} de ${beforeProjectFilter}`);
+          }
+          // Filtrar por tags del reporte si están configurados
+          // Solo incluir entradas que tengan alguno de los tags del reporte
+          if (reportTags.length > 0) {
+            const reportTagNames = reportTags.map(t => t.name);
+            // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+            const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+            const beforeTagFilter = filtered.length;
+            filtered = filtered.filter(entry => {
+              if (!entry.tags || entry.tags.length === 0) {
+                return false;
+              }
+              return entry.tags.some((tag: string) => {
+                const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+                return normalizedReportTags.includes(normalizedTag);
+              });
+            });
+            console.log(`[${apiKeyInfo.fullname}] Después de filtrar por tags (${reportTagNames.join(', ')}): ${filtered.length} de ${beforeTagFilter}`);
+          }
+
+          const enriched = filtered.map(entry => {
             const project = apiKeyInfo.projects.find(p => p.id === entry.pid);
-            return project && project.cid === Number(config.selectedClient);
+            const client = project?.cid ? apiKeyInfo.clients.find(c => c.id === project.cid) : null;
+            return {
+              ...entry,
+              project_name: project?.name || 'Sin proyecto',
+              client_name: client?.name || 'Sin cliente',
+              tag_names: entry.tags || [],
+              user_name: apiKeyInfo.fullname,
+            };
           });
-        }
-        if (config.selectedProject) {
-          filtered = filtered.filter(entry => entry.pid === Number(config.selectedProject));
-        }
-        // Filtrar por tags del reporte si están configurados
-        // Solo incluir entradas que tengan alguno de los tags del reporte
-        if (reportTags.length > 0) {
-          const reportTagNames = reportTags.map(t => t.name);
-          filtered = filtered.filter(entry => 
-            entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
-          );
-        }
 
-        const enriched = filtered.map(entry => {
-          const project = apiKeyInfo.projects.find(p => p.id === entry.pid);
-          const client = project?.cid ? apiKeyInfo.clients.find(c => c.id === project.cid) : null;
-          return {
-            ...entry,
-            project_name: project?.name || 'Sin proyecto',
-            client_name: client?.name || 'Sin cliente',
-            tag_names: entry.tags || [],
-            user_name: apiKeyInfo.fullname,
-          };
+          allEntries.push(...enriched);
+          console.log(`[${apiKeyInfo.fullname}] ✅ Entradas enriquecidas añadidas: ${enriched.length}`);
+        } catch (error: any) {
+          const errorMessage = error?.message || 'Error desconocido';
+          console.error(`[${apiKeyInfo.fullname}] ❌ Error obteniendo entradas de Toggl:`, errorMessage);
+          
+          // Detectar error de límite de API (402)
+          if (errorMessage.includes('hourly limit') || errorMessage.includes('402') || errorMessage.includes('Límite de API')) {
+            const resetMatch = errorMessage.match(/reseteará en (\d+) minuto/);
+            const resetSecondsMatch = errorMessage.match(/reset in (\d+) seconds/);
+            
+            let resetInfo = '';
+            if (resetMatch) {
+              resetInfo = ` El límite se reseteará en ${resetMatch[1]} minuto(s).`;
+            } else if (resetSecondsMatch) {
+              const resetMinutes = Math.ceil(parseInt(resetSecondsMatch[1]) / 60);
+              resetInfo = ` El límite se reseteará en ${resetMinutes} minuto(s).`;
+            }
+            
+            // Mostrar advertencia pero continuar con otras configuraciones
+            console.warn(`⚠️ [${apiKeyInfo.fullname}] Límite de API alcanzado.${resetInfo} Continuando con otras configuraciones...`);
+            setError(`⚠️ Límite de API de Toggl alcanzado para ${apiKeyInfo.fullname}.${resetInfo} El reporte se creará con las entradas disponibles.`);
+            // Continuar con las siguientes configuraciones
+          } else {
+            // Para otros errores, mostrar pero continuar
+            console.error(`[${apiKeyInfo.fullname}] Error procesando config:`, error);
+            const currentError = error?.message || 'Error desconocido';
+            setError(`Error obteniendo datos de ${apiKeyInfo.fullname}: ${currentError}. Continuando con otras configuraciones...`);
+          }
+          // Continuar con las siguientes configuraciones aunque una falle
+        }
+      }
+      
+      console.log(`✅ Total entradas de Toggl obtenidas de todas las configuraciones: ${allEntries.length}`);
+
+      console.log(`Total entradas de Toggl antes de añadir CSV: ${allEntries.length}`);
+
+      // Filtrar las entradas manuales del CSV por tags del reporte si están configurados
+      let filteredManualEntries = manualEntries;
+      if (reportTags.length > 0) {
+        const reportTagNames = reportTags.map(t => t.name);
+        // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+        const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+        const beforeManualFilter = filteredManualEntries.length;
+        filteredManualEntries = filteredManualEntries.filter((entry: any) => {
+          const entryTags = entry.tag_names || entry.tags || [];
+          if (entryTags.length === 0) {
+            return false;
+          }
+          return entryTags.some((tag: string) => {
+            const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+            return normalizedReportTags.includes(normalizedTag);
+          });
         });
-
-        allEntries.push(...enriched);
+        console.log(`Entradas manuales después de filtrar por tags: ${filteredManualEntries.length} de ${beforeManualFilter}`);
       }
 
-      // Añadir las entradas manuales importadas del CSV
-      allEntries.push(...manualEntries);
+      // Añadir las entradas manuales importadas del CSV (ya filtradas por tags si aplica)
+      allEntries.push(...filteredManualEntries);
+      console.log(`Total entradas finales (Toggl + CSV): ${allEntries.length} (${allEntries.length - filteredManualEntries.length} de Toggl + ${filteredManualEntries.length} del CSV)`);
+
+      // Mostrar advertencia si no hay entradas de Toggl pero hay CSV
+      if (allEntries.length - filteredManualEntries.length === 0 && filteredManualEntries.length > 0) {
+        console.warn('⚠️ No se obtuvieron entradas de Toggl. Solo se incluirán las entradas del CSV.');
+      }
 
       // Añadir un aviso si hay entradas antes de 2025-07-29 que necesitan ser añadidas manualmente
       const earliestEntry = allEntries.length > 0 ? allEntries.reduce((earliest, entry) => {
@@ -399,6 +524,12 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
       const evolution = calculateConsumptionEvolution(allEntries);
       const cumulative = calculateCumulativeEvolution(evolution);
 
+      // Hash password if enabled
+      let passwordHash: string | undefined = undefined;
+      if (enablePassword && clientPassword) {
+        passwordHash = await hashPassword(clientPassword);
+      }
+
       const report: ClientReport = {
         id: crypto.randomUUID(),
         name: reportName,
@@ -409,6 +540,7 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
         lastUpdated: new Date().toISOString(),
         publicUrl: generatePublicUrl(),
         isActive: true,
+        passwordHash,
         configs,
         reportTags,
         activeTag,
@@ -440,6 +572,9 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
       setConfigs([]);
       setReportTags([]);
       setActiveTag(undefined);
+      setEnablePassword(false);
+      setClientEmail('');
+      setClientPassword('');
       
       setTimeout(() => {
         setSuccess(false);
@@ -454,9 +589,31 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
   };
 
   return (
-    <Card>
-      <div className="p-6">
-        <h2 className="text-2xl font-bold mb-6">Crear Reporte de Cliente</h2>
+    <div className="space-y-6">
+      {/* API Limit Disclaimer */}
+      {apiLimitInfo && (
+        <Card className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="p-4 flex items-start gap-3">
+            <div className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Clock className="w-3 h-3 text-white" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-200 mb-1">
+                ⚠️ Límite de API de Toggl alcanzado
+              </p>
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                Estamos usando datos en cache debido al límite de llamadas por hora de Toggl (ventana deslizante de 60 minutos). 
+                Los límites varían según el plan: Free (30 req/h), Starter (240 req/h), Premium (600 req/h). 
+                Puedes crear el reporte usando las entradas del CSV, pero las entradas de Toggl no se actualizarán hasta que el límite se resetee en aproximadamente {apiLimitInfo.resetMinutes} minuto(s).
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      
+      <Card>
+        <div className="p-6">
+          <h2 className="text-2xl font-bold mb-6">Crear Reporte de Cliente</h2>
 
       <div className="mb-6 space-y-4">
         <div className="grid grid-cols-2 gap-4">
@@ -491,6 +648,53 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
           </p>
         </div>
       </div>
+
+      {/* Protección con Contraseña */}
+      <Card className="mb-6 p-4 border-primary/20">
+        <div className="flex items-start gap-3">
+          <ShieldCheck className="w-5 h-5 text-primary mt-0.5" />
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-3">
+              <Checkbox 
+                id="enablePassword" 
+                checked={enablePassword}
+                onCheckedChange={(checked) => setEnablePassword(checked as boolean)}
+              />
+              <Label htmlFor="enablePassword" className="font-semibold cursor-pointer">
+                Proteger este reporte con contraseña
+              </Label>
+            </div>
+            {enablePassword && (
+              <div className="space-y-3 mt-3 pl-7">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Email del Cliente (Opcional)</label>
+                  <Input
+                    type="email"
+                    value={clientEmail}
+                    onChange={(e) => setClientEmail(e.target.value)}
+                    placeholder="cliente@email.com"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Solo para referencia. No se usa para autenticación.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Contraseña</label>
+                  <Input
+                    type="password"
+                    value={clientPassword}
+                    onChange={(e) => setClientPassword(e.target.value)}
+                    placeholder="Contraseña segura"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    El cliente necesitará esta contraseña para ver el reporte.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
 
       {/* Gestión de Tags del Reporte */}
       <Card className="mb-6 p-4">
@@ -646,8 +850,9 @@ export default function ClientReportGenerator({ apiKeys }: { apiKeys: ApiKeyInfo
           </div>
         </Card>
       )}
-      </div>
-    </Card>
+        </div>
+      </Card>
+    </div>
   );
 }
 

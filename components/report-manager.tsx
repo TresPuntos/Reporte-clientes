@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import type { ClientReport } from '@/lib/report-types';
 import { getAllReports, deleteReport, getReportById, saveReport } from '@/lib/report-types';
 import EditReportDialog from './edit-report-dialog';
+import { getTimeEntries } from '@/lib/toggl';
+import { getTogglMinDateSync } from '@/lib/toggl-date-utils';
 import {
   calculateConsumptionSpeed,
   calculateAverageHoursPerTask,
@@ -83,29 +85,137 @@ export default function ReportManager() {
   };
 
   const handleRecalculate = async (report: ClientReport) => {
-    if (!confirm('¿Recalcular este reporte con los nuevos cálculos mejorados?')) {
+    if (!confirm('¿Recalcular este reporte? Esto volverá a obtener las entradas de Toggl con los filtros actuales y recalculará todas las estadísticas.')) {
       return;
     }
 
     try {
-      // Recalcular estadísticas con las funciones mejoradas
-      const totalConsumed = report.entries.reduce((sum, e) => sum + e.duration, 0) / 3600;
-      const speed = calculateConsumptionSpeed(report.entries);
-      const avgHours = calculateAverageHoursPerTask(report.entries);
-      const groupedTasks = groupTasksByDescription(report.entries);
-      const teamDist = calculateTeamDistribution(report.entries);
-      const evolution = calculateConsumptionEvolution(report.entries);
+      // Separar entradas históricas (CSV) de las entradas de Toggl
+      let historicalEntries = report.entries.filter((e: any) => e.id < 0);
+      
+      // Filtrar entradas históricas por tags del reporte si están configurados
+      if (report.reportTags && report.reportTags.length > 0) {
+        const reportTagNames = report.reportTags.map(t => t.name);
+        // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+        const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+        historicalEntries = historicalEntries.filter((entry: any) => {
+          const entryTags = entry.tag_names || entry.tags || [];
+          if (entryTags.length === 0) {
+            return false;
+          }
+          return entryTags.some((tag: string) => {
+            const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+            return normalizedReportTags.includes(normalizedTag);
+          });
+        });
+      }
+
+      // Obtener API keys desde localStorage
+      const stored = localStorage.getItem('toggl_api_keys');
+      if (!stored) {
+        throw new Error('No se encontraron API keys configuradas');
+      }
+
+      const storedApiKeys = JSON.parse(stored);
+      const currentDate = new Date().toISOString().split('T')[0];
+      
+      // Asegurar que la fecha de inicio no sea anterior a la fecha mínima de Toggl
+      const togglMinDate = getTogglMinDateSync();
+      const effectiveStartDate = report.startDate < togglMinDate ? togglMinDate : report.startDate;
+      
+      const allTogglEntries: any[] = [];
+
+      // Obtener nuevas entradas de Toggl usando las configuraciones del reporte
+      for (const config of report.configs) {
+        const apiKeyInfo = storedApiKeys.find((k: any) => k.id === config.selectedApiKey);
+        if (!apiKeyInfo) {
+          console.warn(`API key no encontrada para config: ${config.id}`);
+          continue;
+        }
+
+        // Usar el workspace seleccionado en la configuración, o el primero si no está especificado
+        const workspaceId = config.selectedWorkspace 
+          ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+          : apiKeyInfo.workspaces[0]?.id;
+        if (!workspaceId) {
+          console.warn(`Workspace ID no encontrado para ${apiKeyInfo.fullname}`);
+          continue;
+        }
+
+        console.log(`[Recalculate] Obteniendo entradas desde ${effectiveStartDate} hasta ${currentDate} para ${apiKeyInfo.fullname}, workspace ${workspaceId}`);
+        const entries = await getTimeEntries(apiKeyInfo.key, effectiveStartDate, currentDate, workspaceId);
+        console.log(`[Recalculate] Total entradas obtenidas: ${entries.length}`);
+
+        // Aplicar filtros
+        let filtered = entries;
+        if (config.selectedClient) {
+          filtered = filtered.filter((entry: any) => {
+            const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
+            return project && project.cid === Number(config.selectedClient);
+          });
+          console.log(`[Recalculate] Después de filtrar por cliente: ${filtered.length} de ${entries.length}`);
+        }
+        if (config.selectedProject) {
+          filtered = filtered.filter((entry: any) => entry.pid === Number(config.selectedProject));
+          console.log(`[Recalculate] Después de filtrar por proyecto: ${filtered.length}`);
+        }
+        // Filtrar por tags del reporte si están configurados
+        if (report.reportTags && report.reportTags.length > 0) {
+          const reportTagNames = report.reportTags.map(t => t.name);
+          // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+          const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+          const beforeTagFilter = filtered.length;
+          filtered = filtered.filter((entry: any) => {
+            if (!entry.tags || entry.tags.length === 0) {
+              return false;
+            }
+            return entry.tags.some((tag: string) => {
+              const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+              return normalizedReportTags.includes(normalizedTag);
+            });
+          });
+          console.log(`[Recalculate] Después de filtrar por tags (${reportTagNames.join(', ')}): ${filtered.length} de ${beforeTagFilter}`);
+        }
+
+        // Enriquecer entradas
+        const enriched = filtered.map((entry: any) => {
+          const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
+          const client = project?.cid ? apiKeyInfo.clients.find((c: any) => c.id === project.cid) : null;
+          return {
+            ...entry,
+            project_name: project?.name || 'Sin proyecto',
+            client_name: client?.name || 'Sin cliente',
+            tag_names: entry.tags || [],
+            user_name: apiKeyInfo.fullname,
+          };
+        });
+
+        allTogglEntries.push(...enriched);
+      }
+
+      // Combinar entradas históricas (CSV) con las nuevas entradas de Toggl
+      const allEntries = [...historicalEntries, ...allTogglEntries];
+      console.log(`[Recalculate] Total entradas finales: ${allEntries.length} (${historicalEntries.length} históricas + ${allTogglEntries.length} de Toggl)`);
+
+      // Recalcular estadísticas con todas las entradas
+      const totalConsumed = allEntries.reduce((sum, e) => sum + e.duration, 0) / 3600;
+      const speed = calculateConsumptionSpeed(allEntries);
+      const avgHours = calculateAverageHoursPerTask(allEntries);
+      const groupedTasks = groupTasksByDescription(allEntries);
+      const teamDist = calculateTeamDistribution(allEntries);
+      const evolution = calculateConsumptionEvolution(allEntries);
       const cumulative = calculateCumulativeEvolution(evolution);
 
       const updatedReport: ClientReport = {
         ...report,
+        entries: allEntries,
         summary: {
           totalHoursConsumed: totalConsumed,
           totalHoursAvailable: report.totalHours,
           consumptionPercentage: report.totalHours > 0 ? (totalConsumed / report.totalHours) * 100 : 0,
           consumptionSpeed: speed,
           estimatedDaysRemaining: (report.totalHours > totalConsumed && speed > 0) ? Math.ceil((report.totalHours - totalConsumed) / speed) : 0,
-          completedTasks: report.entries.length, // Total de entradas de tiempo
+          completedTasks: groupedTasks.length,
           averageHoursPerTask: avgHours,
           tasksByDescription: groupedTasks,
           teamDistribution: teamDist,
@@ -115,9 +225,10 @@ export default function ReportManager() {
       };
 
       await saveReport(updatedReport);
-      alert('✓ Reporte recalculado exitosamente!');
+      alert('✓ Reporte recalculado exitosamente! Se obtuvieron nuevas entradas de Toggl y se recalculó todo.');
       await loadReports();
     } catch (error) {
+      console.error('Error al recalcular:', error);
       alert('Error al recalcular el reporte: ' + (error instanceof Error ? error.message : 'Error desconocido'));
     }
   };

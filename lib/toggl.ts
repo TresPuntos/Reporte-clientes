@@ -56,8 +56,44 @@ export async function togglFetch<T>(
       if (data.errorText) {
         console.error('Error text from API:', data.errorText);
         
+        // Check if the error is about hourly API limit (402)
+        // Toggl uses sliding window: limits reset after 60 minutes from first request
+        if (response.status === 402 || data.errorText.includes('hourly limit') || data.errorText.includes('Payment Required')) {
+          // Extract reset time if available
+          const resetMatch = data.errorText.match(/reset in (\d+) seconds/);
+          let resetSeconds = 3600; // Default to 60 minutes (sliding window)
+          
+          if (resetMatch) {
+            resetSeconds = parseInt(resetMatch[1]);
+          }
+          
+          const resetMinutes = Math.ceil(resetSeconds / 60);
+          const resetTime = Date.now() + (resetSeconds * 1000);
+          
+          // Guardar información del límite en localStorage
+          // Incluir información del tipo de límite si es posible detectarlo
+          const limitInfo = {
+            resetTime: resetTime,
+            resetSeconds: resetSeconds,
+            detectedAt: Date.now(),
+            // Detectar si es endpoint /me (User-Specific: 30 req/hora) o workspace (varía por plan)
+            isUserEndpoint: endpoint.includes('/me'),
+            endpoint: endpoint,
+          };
+          
+          localStorage.setItem('toggl_api_limit', JSON.stringify(limitInfo));
+          
+          // Mensaje más descriptivo según el tipo de límite
+          if (endpoint.includes('/me')) {
+            errorMessage = `Límite de API de Toggl alcanzado (30 requests/hora para datos del usuario). El límite se reseteará en aproximadamente ${resetMinutes} minuto(s) (ventana deslizante de 60 minutos).`;
+          } else {
+            errorMessage = `Límite de API de Toggl alcanzado (límite por workspace/organización). El límite se reseteará en aproximadamente ${resetMinutes} minuto(s) (ventana deslizante de 60 minutos).`;
+          }
+          
+          console.warn(`⚠️ Límite de API alcanzado (${endpoint.includes('/me') ? 'User-Specific (30/hora)' : 'Workspace/Organization'}). Reset en ~${resetMinutes} minuto(s)`);
+        }
         // Check if the error is about date restrictions
-        if (data.errorText.includes('start_date must not be earlier than')) {
+        else if (data.errorText.includes('start_date must not be earlier than')) {
           // Extract the minimum allowed date
           const match = data.errorText.match(/start_date must not be earlier than (\d{4}-\d{2}-\d{2})/);
           if (match) {
@@ -166,19 +202,40 @@ function getDateChunks(startDate: string, endDate: string): Array<{ start: strin
  * Get time entries for a specific date range
  * Uses the /me/time_entries endpoint which is the recommended way to get time entries
  * Handles large date ranges by chunking into smaller periods
+ * Implements exponential backoff when hitting API limits (402)
  */
 export async function getTimeEntries(
   apiKey: string,
   startDate: string,
   endDate: string,
-  workspaceId: number
+  workspaceId: number,
+  retryCount: number = 0,
+  maxRetries: number = 3
 ): Promise<TimeEntry[]> {
+  // Check if there's an active API limit before making requests
+  const apiLimitData = localStorage.getItem('toggl_api_limit');
+  if (apiLimitData) {
+    try {
+      const limitInfo = JSON.parse(apiLimitData);
+      const resetTime = limitInfo.resetTime || 0;
+      const now = Date.now();
+      
+      if (resetTime > now) {
+        const resetSeconds = Math.ceil((resetTime - now) / 1000);
+        const resetMinutes = Math.ceil(resetSeconds / 60);
+        throw new Error(`Límite de API de Toggl aún activo. El límite se reseteará en aproximadamente ${resetMinutes} minuto(s). Por favor, espera antes de intentar nuevamente.`);
+      }
+    } catch (error) {
+      // If limit expired or error parsing, continue
+    }
+  }
+  
   const chunks = getDateChunks(startDate, endDate);
   const allEntries: TimeEntry[] = [];
   
   console.log(`Fetching time entries in ${chunks.length} chunks for date range ${startDate} to ${endDate}`);
   
-  // Fetch entries for each chunk
+  // Fetch entries for each chunk with error handling
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     
@@ -195,9 +252,49 @@ export async function getTimeEntries(
       const uniqueEntries = chunkEntries.filter(entry => !existingIds.has(entry.id));
       
       allEntries.push(...uniqueEntries);
-    } catch (error) {
-      console.error(`Error fetching entries for ${chunk.start} to ${chunk.end}:`, error);
-      // Continue with next chunk even if one fails
+    } catch (error: any) {
+      const errorMessage = error?.message || '';
+      
+      // Si es error de límite de API (402), implementar exponential backoff
+      if ((errorMessage.includes('hourly limit') || errorMessage.includes('402') || errorMessage.includes('Límite de API')) && retryCount < maxRetries) {
+        // Exponential backoff: 2^retryCount seconds (1s, 2s, 4s, etc.)
+        const backoffSeconds = Math.pow(2, retryCount);
+        console.warn(`⚠️ Límite de API detectado. Esperando ${backoffSeconds} segundo(s) antes de reintentar...`);
+        
+        await new Promise(resolve => setTimeout(resolve, backoffSeconds * 1000));
+        
+        // Reintentar solo este chunk con exponential backoff
+        try {
+          const chunkEntries = await fetchAllPages(apiKey, chunk.start, chunk.end, workspaceId);
+          const existingIds = new Set(allEntries.map(e => e.id));
+          const uniqueEntries = chunkEntries.filter(entry => !existingIds.has(entry.id));
+          allEntries.push(...uniqueEntries);
+          console.log(`✅ Reintento exitoso para chunk ${i + 1}`);
+        } catch (retryError) {
+          // Si falla el reintento, continuar con el siguiente chunk
+          console.error(`❌ Reintento fallido para chunk ${i + 1}:`, retryError);
+          // Si es el último chunk o todos los chunks fallaron, lanzar el error
+          if (i === chunks.length - 1 || allEntries.length === 0) {
+            throw error;
+          }
+        }
+      } else {
+        // Para otros errores o si se alcanzó el máximo de reintentos
+        console.error(`Error fetching entries for ${chunk.start} to ${chunk.end}:`, error);
+        
+        // Si es el último chunk o no tenemos entradas, lanzar el error
+        if (i === chunks.length - 1 || allEntries.length === 0) {
+          throw error;
+        }
+        
+        // Continuar con el siguiente chunk para otros errores
+        console.warn(`Continuando con siguiente chunk después de error...`);
+      }
+    }
+    
+    // Pequeña pausa entre chunks para evitar saturar la API (especialmente importante con límites)
+    if (i < chunks.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 100)); // 100ms entre chunks
     }
   }
   

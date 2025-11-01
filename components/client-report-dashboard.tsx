@@ -36,6 +36,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Activity, TrendingUp, Clock, CheckCircle, Calendar, Users, Package, Filter, X, ArrowRight, Rocket, ShieldCheck, MessageSquare, Send, Zap, ChevronDown } from 'lucide-react';
 import { getTogglMinDateSync } from '@/lib/toggl-date-utils';
 import { toast } from '@/lib/toast';
@@ -47,6 +48,12 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
   const [isUpdating, setIsUpdating] = useState(false);
   const [lastAutoUpdate, setLastAutoUpdate] = useState<Date | null>(null);
   
+  // Password protection states
+  const [isPasswordProtected, setIsPasswordProtected] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [password, setPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  
   // Filter states
   const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -57,19 +64,139 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
   const [timePeriod, setTimePeriod] = useState<string>('año-actual');
   const [customDateStart, setCustomDateStart] = useState<string>('');
   const [customDateEnd, setCustomDateEnd] = useState<string>('');
+  
+  // API limit state
+  const [apiLimitInfo, setApiLimitInfo] = useState<{ resetTime: number; resetMinutes: number } | null>(null);
+  
+  // Check API limit status
+  useEffect(() => {
+    const checkApiLimit = () => {
+      const apiLimitData = localStorage.getItem('toggl_api_limit');
+      if (apiLimitData) {
+        try {
+          const limitInfo = JSON.parse(apiLimitData);
+          const resetTime = limitInfo.resetTime || 0;
+          const now = Date.now();
+          
+          if (resetTime > now) {
+            const resetSeconds = Math.ceil((resetTime - now) / 1000);
+            const resetMinutes = Math.ceil(resetSeconds / 60);
+            setApiLimitInfo({ resetTime, resetMinutes });
+          } else {
+            setApiLimitInfo(null);
+          }
+        } catch (error) {
+          setApiLimitInfo(null);
+        }
+      } else {
+        setApiLimitInfo(null);
+      }
+    };
+    
+    checkApiLimit();
+    // Verificar cada minuto
+    const interval = setInterval(checkApiLimit, 60000);
+    return () => clearInterval(interval);
+  }, []);
+  
+  // Check if report is password protected on mount
+  useEffect(() => {
+    const hasPassword = !!report.passwordHash;
+    setIsPasswordProtected(hasPassword);
+    
+    // Check if already authenticated in session
+    const sessionKey = `report_auth_${report.publicUrl}`;
+    const isAuth = sessionStorage.getItem(sessionKey) === 'true';
+    setIsAuthenticated(isAuth);
+  }, [report]);
 
-  // Auto-refresh cada 30 minutos  
+  const handlePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError('');
+
+    try {
+      const response = await fetch(`/api/reports/${report.publicUrl}/check-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.valid) {
+        setPasswordError('Contraseña incorrecta');
+        return;
+      }
+
+      // Guardar en sesión
+      const sessionKey = `report_auth_${report.publicUrl}`;
+      sessionStorage.setItem(sessionKey, 'true');
+      setIsAuthenticated(true);
+    } catch (error) {
+      setPasswordError('Error verificando contraseña');
+    }
+  };
+
+  // Auto-refresh cada 12 horas  
   useEffect(() => {
     const updateWithReport = async () => {
       try {
+        // Verificar si hay un límite de API activo antes de hacer llamadas
+        const apiLimitData = localStorage.getItem('toggl_api_limit');
+        if (apiLimitData) {
+          try {
+            const limitInfo = JSON.parse(apiLimitData);
+            const resetTime = limitInfo.resetTime || 0;
+            const now = Date.now();
+            
+            if (resetTime > now) {
+              const resetSeconds = Math.ceil((resetTime - now) / 1000);
+              const resetMinutes = Math.ceil(resetSeconds / 60);
+              console.log(`⏸️ [Auto-refresh] Límite de API activo. Saltando actualización. Reset en ~${resetMinutes} minuto(s)`);
+              return; // No hacer llamadas si hay límite activo
+            }
+          } catch (error) {
+            // Continuar si hay error parseando
+          }
+        }
+        
         const stored = localStorage.getItem('toggl_api_keys');
         if (!stored) return;
 
         const apiKeys = JSON.parse(stored);
         
         // Separar entradas actuales del reporte
-        const historicalEntries = report.entries.filter((e: any) => e.id < 0);
+        let historicalEntries = report.entries.filter((e: any) => e.id < 0);
         const existingTogglEntries = report.entries.filter((e: any) => e.id >= 0);
+        
+        // Filtrar entradas históricas por tags del reporte si están configurados
+        if (report.reportTags && report.reportTags.length > 0) {
+          const reportTagNames = report.reportTags.map(t => t.name);
+          // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+          const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+          const beforeHistoricalFilter = historicalEntries.length;
+          historicalEntries = historicalEntries.filter((entry: any) => {
+            const entryTags = entry.tag_names || entry.tags || [];
+            if (entryTags.length === 0) {
+              return false;
+            }
+            const hasMatchingTag = entryTags.some((tag: string) => {
+              const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+              return normalizedReportTags.includes(normalizedTag);
+            });
+            if (!hasMatchingTag) {
+              console.log(`[Auto-refresh] ❌ Entrada histórica rechazada por tags: "${entry.description}"`, {
+                tags: entryTags,
+                normalizedTags: entryTags.map((t: string) => t.toLowerCase().replace(/\s+/g, '')),
+                buscaTags: reportTagNames,
+                buscaTagsNormalized: normalizedReportTags,
+                fecha: entry.start
+              });
+            }
+            return hasMatchingTag;
+          });
+          console.log(`[Auto-refresh] ✅ Entradas históricas después de filtrar por tags (${reportTagNames.join(', ')}): ${historicalEntries.length} de ${beforeHistoricalFilter}`);
+        }
         
         // Determinar qué workspaces se están usando en las configuraciones actuales
         const activeWorkspaceIds = new Set<number>();
@@ -164,6 +291,8 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
             // Filtrar por tags del reporte si están configurados
             if (report.reportTags && report.reportTags.length > 0) {
               const reportTagNames = report.reportTags.map(t => t.name);
+              // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+              const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
               const beforeTagFilter = filtered.length;
               
               // Log todas las entradas antes del filtro para debug
@@ -171,16 +300,31 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
                 filtered.map((e: any) => ({
                   desc: e.description,
                   tags: e.tags || [],
-                  hasTag: e.tags && e.tags.some((tag: string) => reportTagNames.includes(tag))
+                  normalizedTags: (e.tags || []).map((t: string) => t.toLowerCase().replace(/\s+/g, '')),
+                  hasTag: e.tags && e.tags.some((tag: string) => {
+                    const normalized = tag.toLowerCase().replace(/\s+/g, '');
+                    return normalizedReportTags.includes(normalized);
+                  })
                 }))
               );
               
               filtered = filtered.filter((entry: any) => {
-                const hasMatchingTag = entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag));
+                if (!entry.tags || entry.tags.length === 0) {
+                  console.log(`[Auto-refresh][${apiKeyInfo.fullname}] ❌ Entrada sin tags rechazada: "${entry.description}"`);
+                  return false;
+                }
+                
+                const hasMatchingTag = entry.tags.some((tag: string) => {
+                  const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+                  return normalizedReportTags.includes(normalizedTag);
+                });
+                
                 if (!hasMatchingTag) {
                   console.log(`[Auto-refresh][${apiKeyInfo.fullname}] ❌ Entrada rechazada por tags: "${entry.description}"`, {
                     tags: entry.tags || [],
+                    normalizedTags: (entry.tags || []).map((t: string) => t.toLowerCase().replace(/\s+/g, '')),
                     buscaTags: reportTagNames,
+                    buscaTagsNormalized: normalizedReportTags,
                     fecha: entry.start
                   });
                 }
@@ -280,8 +424,8 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
       }
     };
 
-    // Actualizar cada 30 minutos
-    const intervalId = setInterval(updateWithReport, 30 * 60 * 1000);
+    // Actualizar cada 12 horas
+    const intervalId = setInterval(updateWithReport, 12 * 60 * 60 * 1000);
     
     return () => clearInterval(intervalId);
   }, []); // Solo ejecutar una vez al montar
@@ -665,8 +809,37 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
       const apiKeys = JSON.parse(stored);
       
       // SEPARAR: Entradas históricas (CSV) y entradas de Toggl existentes
-      const historicalEntries = report.entries.filter((e: any) => e.id < 0); // IDs negativos = CSV
+      let historicalEntries = report.entries.filter((e: any) => e.id < 0); // IDs negativos = CSV
       const existingTogglEntries = report.entries.filter((e: any) => e.id >= 0); // IDs positivos = Toggl
+      
+      // Filtrar entradas históricas por tags del reporte si están configurados
+      if (report.reportTags && report.reportTags.length > 0) {
+        const reportTagNames = report.reportTags.map(t => t.name);
+        // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+        const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+        const beforeHistoricalFilter = historicalEntries.length;
+        historicalEntries = historicalEntries.filter((entry: any) => {
+          const entryTags = entry.tag_names || entry.tags || [];
+          if (entryTags.length === 0) {
+            return false;
+          }
+          const hasMatchingTag = entryTags.some((tag: string) => {
+            const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+            return normalizedReportTags.includes(normalizedTag);
+          });
+          if (!hasMatchingTag) {
+            console.log(`❌ Entrada histórica rechazada por tags: "${entry.description}"`, {
+              tags: entryTags,
+              normalizedTags: entryTags.map((t: string) => t.toLowerCase().replace(/\s+/g, '')),
+              buscaTags: reportTagNames,
+              buscaTagsNormalized: normalizedReportTags,
+              fecha: entry.start
+            });
+          }
+          return hasMatchingTag;
+        });
+        console.log(`✅ Entradas históricas después de filtrar por tags (${reportTagNames.join(', ')}): ${historicalEntries.length} de ${beforeHistoricalFilter}`);
+      }
       
       // Determinar qué workspaces y API keys se están usando en las configuraciones actuales
       const activeWorkspaceIds = new Set<number>();
@@ -768,6 +941,8 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
           // Filtrar por tags del reporte si están configurados
           if (report.reportTags && report.reportTags.length > 0) {
             const reportTagNames = report.reportTags.map(t => t.name);
+            // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+            const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
             const beforeTagFilter = filtered.length;
             
             // Log todas las entradas antes del filtro para debug
@@ -775,17 +950,32 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
               filtered.map((e: any) => ({
                 desc: e.description,
                 tags: e.tags || [],
-                hasTag: e.tags && e.tags.some((tag: string) => reportTagNames.includes(tag))
+                normalizedTags: (e.tags || []).map((t: string) => t.toLowerCase().replace(/\s+/g, '')),
+                hasTag: e.tags && e.tags.some((tag: string) => {
+                  const normalized = tag.toLowerCase().replace(/\s+/g, '');
+                  return normalizedReportTags.includes(normalized);
+                })
               }))
             );
             
             filtered = filtered.filter((entry: any) => {
-              const hasMatchingTag = entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag));
+              if (!entry.tags || entry.tags.length === 0) {
+                console.log(`[${apiKeyInfo.fullname}] ❌ Entrada sin tags rechazada: "${entry.description}"`);
+                return false;
+              }
+              
+              const hasMatchingTag = entry.tags.some((tag: string) => {
+                const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+                return normalizedReportTags.includes(normalizedTag);
+              });
+              
               if (!hasMatchingTag) {
                 // Log todas las entradas que no pasan el filtro de tags
                 console.log(`[${apiKeyInfo.fullname}] ❌ Entrada rechazada por tags: "${entry.description}"`, {
                   tags: entry.tags || [],
+                  normalizedTags: (entry.tags || []).map((t: string) => t.toLowerCase().replace(/\s+/g, '')),
                   buscaTags: reportTagNames,
+                  buscaTagsNormalized: normalizedReportTags,
                   fecha: entry.start,
                   proyecto: entry.pid
                 });
@@ -942,6 +1132,54 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
     }
   };
 
+  // Mostrar pantalla de login si está protegido y no autenticado
+  if (isPasswordProtected && !isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader className="space-y-1 text-center">
+            <div className="flex justify-center mb-4">
+              <div className="p-3 rounded-full bg-primary/10">
+                <ShieldCheck className="w-8 h-8 text-primary" />
+              </div>
+            </div>
+            <CardTitle className="text-2xl font-bold">
+              Reporte Protegido
+            </CardTitle>
+            <p className="text-muted-foreground">
+              Este reporte requiere contraseña para acceder
+            </p>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handlePasswordSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="password">Contraseña</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+
+              {passwordError && (
+                <div className="p-3 text-sm text-red-500 bg-red-50 dark:bg-red-950 rounded-md border border-red-200 dark:border-red-800">
+                  {passwordError}
+                </div>
+              )}
+
+              <Button type="submit" className="w-full">
+                Acceder al Reporte
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background transition-colors duration-300">
       <div className="max-w-[1400px] mx-auto p-6 md:p-8 lg:p-12 space-y-8">
@@ -949,6 +1187,28 @@ export default function ClientReportDashboard({ report: initialReport }: { repor
         <div className="absolute top-6 right-6 flex items-center gap-3">
           <ThemeToggle />
         </div>
+
+        {/* API Limit Disclaimer */}
+        {apiLimitInfo && (
+          <Card className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+            <CardContent className="p-4 flex items-start gap-3">
+              <div className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <Clock className="w-3 h-3 text-white" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-900 dark:text-amber-200 mb-1">
+                  ⚠️ Límite de API de Toggl alcanzado
+                </p>
+                <p className="text-xs text-amber-800 dark:text-amber-300">
+                  Estamos usando datos en cache debido al límite de llamadas por hora de Toggl (ventana deslizante de 60 minutos). 
+                  Los límites varían según el plan: Free (30 req/h), Starter (240 req/h), Premium (600 req/h). 
+                  Los datos se actualizarán automáticamente cuando el límite se resetee en aproximadamente {apiLimitInfo.resetMinutes} minuto(s). 
+                  Mientras tanto, estás viendo los datos más recientes disponibles en cache.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Header Section - Exactamente como la imagen */}
         <div className="space-y-4">

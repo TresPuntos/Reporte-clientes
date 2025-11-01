@@ -102,6 +102,119 @@ export default function EditReportDialog({
   const handleSave = async () => {
     setLoading(true);
     try {
+      // Verificar si han cambiado los filtros, tags o configuraciones que requieren recalcular entradas
+      const filtersChanged = 
+        JSON.stringify(configs) !== JSON.stringify(report.configs) ||
+        JSON.stringify(reportTags) !== JSON.stringify(report.reportTags || []) ||
+        startDate !== report.startDate;
+
+      let entriesToUse = report.entries;
+      let summaryToUse = report.summary;
+
+      // Si cambiaron los filtros, recalcular las entradas
+      if (filtersChanged) {
+        // Separar entradas históricas (CSV) de las entradas de Toggl
+        let historicalEntries = report.entries.filter((e: any) => e.id < 0);
+        
+      // Filtrar entradas históricas por tags si están configurados
+      if (reportTags.length > 0) {
+        const reportTagNames = reportTags.map(t => t.name);
+        // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+        const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+        historicalEntries = historicalEntries.filter((entry: any) => {
+          const entryTags = entry.tag_names || entry.tags || [];
+          if (entryTags.length === 0) {
+            return false;
+          }
+          return entryTags.some((tag: string) => {
+            const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+            return normalizedReportTags.includes(normalizedTag);
+          });
+        });
+      }
+
+        // Obtener API keys desde localStorage
+        const stored = localStorage.getItem('toggl_api_keys');
+        if (stored) {
+          const storedApiKeys = JSON.parse(stored);
+          const currentDate = new Date().toISOString().split('T')[0];
+          const allTogglEntries: any[] = [];
+
+          // Obtener nuevas entradas de Toggl usando las configuraciones ACTUALIZADAS
+          for (const config of configs) {
+            const apiKeyInfo = storedApiKeys.find((k: any) => k.id === config.selectedApiKey);
+            if (!apiKeyInfo) continue;
+
+            // Usar el workspace seleccionado en la configuración, o el primero si no está especificado
+            const workspaceId = config.selectedWorkspace 
+              ? apiKeyInfo.workspaces.find((w: any) => w.id === config.selectedWorkspace)?.id
+              : apiKeyInfo.workspaces[0]?.id;
+            if (!workspaceId) continue;
+
+            const entries = await getTimeEntries(apiKeyInfo.key, startDate, currentDate, workspaceId);
+
+            // Aplicar filtros con las configuraciones actualizadas
+            let filtered = entries;
+            if (config.selectedClient) {
+              filtered = filtered.filter((entry: any) => {
+                const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
+                return project && project.cid === Number(config.selectedClient);
+              });
+            }
+            if (config.selectedProject) {
+              filtered = filtered.filter((entry: any) => entry.pid === Number(config.selectedProject));
+            }
+            // Filtrar por tags del reporte si están configurados
+            if (reportTags.length > 0) {
+              const reportTagNames = reportTags.map(t => t.name);
+              filtered = filtered.filter((entry: any) => 
+                entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
+              );
+            }
+
+            // Enriquecer entradas
+            const enriched = filtered.map((entry: any) => {
+              const project = apiKeyInfo.projects.find((p: any) => p.id === entry.pid);
+              const client = project?.cid ? apiKeyInfo.clients.find((c: any) => c.id === project.cid) : null;
+              return {
+                ...entry,
+                project_name: project?.name || 'Sin proyecto',
+                client_name: client?.name || 'Sin cliente',
+                tag_names: entry.tags || [],
+                user_name: apiKeyInfo.fullname,
+              };
+            });
+
+            allTogglEntries.push(...enriched);
+          }
+
+          // Combinar entradas históricas (CSV) con las nuevas entradas de Toggl
+          entriesToUse = [...historicalEntries, ...allTogglEntries];
+
+          // Recalcular estadísticas
+          const totalConsumed = entriesToUse.reduce((sum, e) => sum + e.duration, 0) / 3600;
+          const speed = calculateConsumptionSpeed(entriesToUse);
+          const avgHours = calculateAverageHoursPerTask(entriesToUse);
+          const groupedTasks = groupTasksByDescription(entriesToUse);
+          const teamDist = calculateTeamDistribution(entriesToUse);
+          const evolution = calculateConsumptionEvolution(entriesToUse);
+          const cumulative = calculateCumulativeEvolution(evolution);
+
+          summaryToUse = {
+            totalHoursConsumed: totalConsumed,
+            totalHoursAvailable: totalHours,
+            consumptionPercentage: totalHours > 0 ? (totalConsumed / totalHours) * 100 : 0,
+            consumptionSpeed: speed,
+            estimatedDaysRemaining: (totalHours > totalConsumed && speed > 0) ? Math.ceil((totalHours - totalConsumed) / speed) : 0,
+            completedTasks: groupedTasks.length,
+            averageHoursPerTask: avgHours,
+            tasksByDescription: groupedTasks,
+            teamDistribution: teamDist,
+            consumptionEvolution: cumulative,
+          };
+        }
+      }
+
       const updatedReport: ClientReport = {
         ...report,
         name,
@@ -112,6 +225,8 @@ export default function EditReportDialog({
         configs, // Incluir las configuraciones actualizadas
         reportTags,
         activeTag,
+        entries: entriesToUse,
+        summary: summaryToUse,
         lastUpdated: new Date().toISOString(),
       };
 
@@ -133,7 +248,16 @@ export default function EditReportDialog({
     setLoading(true);
     try {
       // Separar entradas históricas (CSV) de las entradas de Toggl
-      const historicalEntries = report.entries.filter((e: any) => e.id < 0);
+      let historicalEntries = report.entries.filter((e: any) => e.id < 0);
+      
+      // Filtrar entradas históricas por tags del reporte si están configurados
+      if (reportTags.length > 0) {
+        const reportTagNames = reportTags.map(t => t.name);
+        historicalEntries = historicalEntries.filter((entry: any) => {
+          const entryTags = entry.tag_names || entry.tags || [];
+          return entryTags.length > 0 && entryTags.some((tag: string) => reportTagNames.includes(tag));
+        });
+      }
       
       // Obtener API keys desde localStorage
       const stored = localStorage.getItem('toggl_api_keys');
@@ -174,9 +298,19 @@ export default function EditReportDialog({
         // Filtrar por tags del reporte si están configurados
         if (reportTags.length > 0) {
           const reportTagNames = reportTags.map(t => t.name);
-          filtered = filtered.filter((entry: any) => 
-            entry.tags && entry.tags.some((tag: string) => reportTagNames.includes(tag))
-          );
+          // Normalizar tags del reporte para comparación (lowercase y sin espacios)
+          const normalizedReportTags = reportTagNames.map(tag => tag.toLowerCase().replace(/\s+/g, ''));
+          const beforeTagFilter = filtered.length;
+          filtered = filtered.filter((entry: any) => {
+            if (!entry.tags || entry.tags.length === 0) {
+              return false;
+            }
+            return entry.tags.some((tag: string) => {
+              const normalizedTag = tag.toLowerCase().replace(/\s+/g, '');
+              return normalizedReportTags.includes(normalizedTag);
+            });
+          });
+          console.log(`[Edit] Después de filtrar por tags (${reportTagNames.join(', ')}): ${filtered.length} de ${beforeTagFilter}`);
         }
 
         // Enriquecer entradas

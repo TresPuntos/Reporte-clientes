@@ -12,6 +12,7 @@ export interface ClientReport {
   lastUpdated: string;
   publicUrl: string; // Token único para el link
   isActive: boolean;
+  passwordHash?: string; // Hash de contraseña opcional para proteger el reporte
   configs: ReportConfig[];
   reportTags: ReportTag[]; // Tags del reporte con su estado
   activeTag?: string; // Tag actualmente activo

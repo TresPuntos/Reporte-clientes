@@ -33,6 +33,7 @@ export async function initializeDatabase() {
         public_url VARCHAR(255) UNIQUE NOT NULL,
         is_active BOOLEAN DEFAULT true,
         active_tag VARCHAR(255),
+        password_hash VARCHAR(255),
         data JSONB NOT NULL,
         created_on TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -63,6 +64,25 @@ export async function initializeDatabase() {
     // Índice para búsqueda por email
     await sql`
       CREATE INDEX IF NOT EXISTS idx_api_keys_email ON api_keys(email)
+    `;
+
+    // Tabla de administradores
+    await sql`
+      CREATE TABLE IF NOT EXISTS admins (
+        id VARCHAR(255) PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        fullname VARCHAR(255),
+        role VARCHAR(50) DEFAULT 'admin',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_login TIMESTAMP,
+        is_active BOOLEAN DEFAULT true
+      )
+    `;
+
+    // Índice para búsqueda por email
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_admins_email ON admins(email)
     `;
 
     console.log('Database initialized successfully');
@@ -131,7 +151,7 @@ export async function saveReportToDB(report: ClientReport): Promise<void> {
     const result = await sql`
       INSERT INTO reports (
         id, name, package_id, total_hours, price, start_date, end_date,
-        created_at, last_updated, public_url, is_active, active_tag, data
+        created_at, last_updated, public_url, is_active, active_tag, password_hash, data
       ) VALUES (
         ${report.id},
         ${report.name},
@@ -145,6 +165,7 @@ export async function saveReportToDB(report: ClientReport): Promise<void> {
         ${report.publicUrl},
         ${report.isActive !== undefined ? report.isActive : true},
         ${report.activeTag || null},
+        ${report.passwordHash || null},
         ${JSON.stringify(report)}::jsonb
       )
       ON CONFLICT (id) 
@@ -158,6 +179,7 @@ export async function saveReportToDB(report: ClientReport): Promise<void> {
         last_updated = EXCLUDED.last_updated,
         is_active = EXCLUDED.is_active,
         active_tag = EXCLUDED.active_tag,
+        password_hash = EXCLUDED.password_hash,
         data = EXCLUDED.data
     `;
     
@@ -340,5 +362,98 @@ export async function deleteApiKeyFromDB(id: string): Promise<void> {
 // Función helper para descifrar API key
 export async function decryptApiKey(encrypted: string): Promise<string> {
   return decrypt(encrypted);
+}
+
+// Funciones para administradores
+export interface AdminDB {
+  id: string;
+  email: string;
+  password_hash: string;
+  fullname?: string;
+  role: string;
+  created_at: Date;
+  last_login?: Date;
+  is_active: boolean;
+}
+
+export async function getAdminByEmail(email: string): Promise<AdminDB | null> {
+  try {
+    const result = await sql`
+      SELECT id, email, password_hash, fullname, role, created_at, last_login, is_active
+      FROM admins
+      WHERE email = ${email} AND is_active = true
+      LIMIT 1
+    `;
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+    
+    return {
+      id: result.rows[0].id,
+      email: result.rows[0].email,
+      password_hash: result.rows[0].password_hash,
+      fullname: result.rows[0].fullname,
+      role: result.rows[0].role,
+      created_at: result.rows[0].created_at,
+      last_login: result.rows[0].last_login,
+      is_active: result.rows[0].is_active,
+    };
+  } catch (error) {
+    console.error('Error fetching admin by email:', error);
+    throw error;
+  }
+}
+
+export async function createAdmin(
+  id: string,
+  email: string,
+  passwordHash: string,
+  fullname?: string,
+  role: string = 'admin'
+): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO admins (id, email, password_hash, fullname, role)
+      VALUES (${id}, ${email}, ${passwordHash}, ${fullname || null}, ${role})
+      ON CONFLICT (email) DO NOTHING
+    `;
+  } catch (error) {
+    console.error('Error creating admin:', error);
+    throw error;
+  }
+}
+
+export async function updateAdminLastLogin(email: string): Promise<void> {
+  try {
+    await sql`
+      UPDATE admins 
+      SET last_login = CURRENT_TIMESTAMP
+      WHERE email = ${email}
+    `;
+  } catch (error) {
+    console.error('Error updating admin last login:', error);
+    throw error;
+  }
+}
+
+// Función helper para obtener password_hash de reporte
+export async function getReportPasswordHash(publicUrl: string): Promise<string | null> {
+  try {
+    const result = await sql`
+      SELECT password_hash FROM reports 
+      WHERE public_url = ${publicUrl} AND is_active = true
+      LIMIT 1
+    `;
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+    
+    return result.rows[0].password_hash;
+  } catch (error) {
+    console.error('Error fetching report password hash:', error);
+    throw error;
+  }
 }
 
