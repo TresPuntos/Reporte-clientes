@@ -85,6 +85,32 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_admins_email ON admins(email)
     `;
 
+    // Tabla para rastrear consumo de API de Toggl
+    await sql`
+      CREATE TABLE IF NOT EXISTS api_usage_log (
+        id VARCHAR(255) PRIMARY KEY,
+        api_key_id VARCHAR(255) NOT NULL,
+        endpoint VARCHAR(500) NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        response_status INTEGER,
+        is_user_endpoint BOOLEAN DEFAULT false,
+        FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE
+      )
+    `;
+
+    // Índices para búsquedas eficientes
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_api_usage_api_key_id ON api_usage_log(api_key_id)
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage_log(timestamp)
+    `;
+
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_api_usage_api_key_timestamp ON api_usage_log(api_key_id, timestamp)
+    `;
+
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Error initializing database:', error);
@@ -454,6 +480,138 @@ export async function getReportPasswordHash(publicUrl: string): Promise<string |
   } catch (error) {
     console.error('Error fetching report password hash:', error);
     throw error;
+  }
+}
+
+// Funciones para rastrear consumo de API
+export interface ApiUsageStats {
+  apiKeyId: string;
+  totalRequests: number;
+  userEndpointRequests: number; // /me endpoints (30 req/hora)
+  workspaceEndpointRequests: number; // otros endpoints (varía por plan)
+  oldestRequestTimestamp: Date | null;
+  newestRequestTimestamp: Date | null;
+  resetTime: Date | null;
+  remainingQuota: {
+    userEndpoints: number;
+    workspaceEndpoints: number;
+  };
+}
+
+/**
+ * Registra una llamada API en el log
+ */
+export async function logApiUsage(
+  apiKeyId: string,
+  endpoint: string,
+  responseStatus: number
+): Promise<void> {
+  try {
+    const isUserEndpoint = endpoint.includes('/me');
+    const id = crypto.randomUUID();
+    
+    await sql`
+      INSERT INTO api_usage_log (id, api_key_id, endpoint, response_status, is_user_endpoint)
+      VALUES (${id}, ${apiKeyId}, ${endpoint}, ${responseStatus}, ${isUserEndpoint})
+    `;
+  } catch (error) {
+    console.error('Error logging API usage:', error);
+    // No lanzar error, solo log para no interrumpir el flujo
+  }
+}
+
+/**
+ * Obtiene estadísticas de uso de API para una API key
+ * Toggl usa ventana deslizante de 60 minutos
+ */
+export async function getApiUsageStats(apiKeyId: string): Promise<ApiUsageStats> {
+  try {
+    // Obtener todas las llamadas en la última hora (ventana deslizante)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    
+    const result = await sql`
+      SELECT 
+        endpoint,
+        timestamp,
+        response_status,
+        is_user_endpoint
+      FROM api_usage_log
+      WHERE api_key_id = ${apiKeyId}
+        AND timestamp >= ${oneHourAgo}
+      ORDER BY timestamp ASC
+    `;
+    
+    const requests = result.rows;
+    
+    // Límites de Toggl API (según documentación)
+    // /me endpoints: 30 requests/hora
+    // Workspace/Organization endpoints: varía por plan, típicamente 100-1000 req/hora
+    // Usaremos 100 como límite conservador para workspace endpoints
+    const USER_ENDPOINT_LIMIT = 30;
+    const WORKSPACE_ENDPOINT_LIMIT = 100; // Conservador, puede variar por plan
+    
+    const userEndpointRequests = requests.filter(r => r.is_user_endpoint).length;
+    const workspaceEndpointRequests = requests.filter(r => !r.is_user_endpoint).length;
+    
+    // Calcular tiempo de reset (60 minutos desde la primera llamada en la ventana)
+    const oldestRequest = requests.length > 0 ? requests[0] : null;
+    let resetTime: Date | null = null;
+    
+    if (oldestRequest) {
+      const oldestTimestamp = new Date(oldestRequest.timestamp);
+      resetTime = new Date(oldestTimestamp.getTime() + 60 * 60 * 1000);
+    }
+    
+    // Calcular cuota restante
+    const remainingUserQuota = Math.max(0, USER_ENDPOINT_LIMIT - userEndpointRequests);
+    const remainingWorkspaceQuota = Math.max(0, WORKSPACE_ENDPOINT_LIMIT - workspaceEndpointRequests);
+    
+    return {
+      apiKeyId,
+      totalRequests: requests.length,
+      userEndpointRequests,
+      workspaceEndpointRequests,
+      oldestRequestTimestamp: oldestRequest ? new Date(oldestRequest.timestamp) : null,
+      newestRequestTimestamp: requests.length > 0 ? new Date(requests[requests.length - 1].timestamp) : null,
+      resetTime,
+      remainingQuota: {
+        userEndpoints: remainingUserQuota,
+        workspaceEndpoints: remainingWorkspaceQuota,
+      },
+    };
+  } catch (error) {
+    console.error('Error fetching API usage stats:', error);
+    // Retornar estadísticas vacías en caso de error
+    return {
+      apiKeyId,
+      totalRequests: 0,
+      userEndpointRequests: 0,
+      workspaceEndpointRequests: 0,
+      oldestRequestTimestamp: null,
+      newestRequestTimestamp: null,
+      resetTime: null,
+      remainingQuota: {
+        userEndpoints: 30,
+        workspaceEndpoints: 100,
+      },
+    };
+  }
+}
+
+/**
+ * Limpia registros antiguos (más de 24 horas) para mantener la BD limpia
+ */
+export async function cleanupOldApiUsageLogs(): Promise<void> {
+  try {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    
+    await sql`
+      DELETE FROM api_usage_log
+      WHERE timestamp < ${oneDayAgo}
+    `;
+  } catch (error) {
+    console.error('Error cleaning up old API usage logs:', error);
+    // No lanzar error
   }
 }
 

@@ -4,17 +4,41 @@ import { useState, useEffect } from 'react';
 import type { ApiKeyInfo } from '@/lib/types';
 import { getMe } from '@/lib/toggl';
 import { Card } from '@/components/ui/card';
+import type { ApiUsageStats } from '@/lib/db';
 
 export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (keys: ApiKeyInfo[]) => void }) {
   const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
+  const [apiStats, setApiStats] = useState<Record<string, ApiUsageStats>>({});
   const [newApiKey, setNewApiKey] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
 
   // Load API keys from server (database) on mount
   useEffect(() => {
     loadApiKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cargar estadísticas de API cuando cambian las keys
+  useEffect(() => {
+    if (apiKeys.length > 0) {
+      loadApiStats();
+      // Recargar estadísticas cada 30 segundos
+      const interval = setInterval(() => {
+        loadApiStats();
+      }, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [apiKeys.length]);
+
+  // Forzar re-render cada segundo para actualizar el contador de tiempo restante
+  const [timeNow, setTimeNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeNow(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
   }, []);
 
   const loadApiKeys = async () => {
@@ -177,6 +201,11 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
         // Verificar que se guardó correctamente recargando
         await loadApiKeys();
         
+        // Recargar estadísticas después de añadir nueva key
+        setTimeout(() => {
+          loadApiStats();
+        }, 1000);
+        
         // Verificar una vez más que se cargó
         const verifyResponse = await fetch('/api/api-keys');
         if (verifyResponse.ok) {
@@ -204,6 +233,79 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
     }
   };
 
+  const loadApiStats = async () => {
+    try {
+      setIsLoadingStats(true);
+      const response = await fetch('/api/api-keys/stats');
+      if (response.ok) {
+        const statsData = await response.json();
+        const statsMap: Record<string, ApiUsageStats> = {};
+        statsData.forEach((item: { 
+          apiKeyId: string; 
+          stats: {
+            apiKeyId: string;
+            totalRequests: number;
+            userEndpointRequests: number;
+            workspaceEndpointRequests: number;
+            oldestRequestTimestamp: string | null;
+            newestRequestTimestamp: string | null;
+            resetTime: string | null;
+            remainingQuota: {
+              userEndpoints: number;
+              workspaceEndpoints: number;
+            };
+          };
+        }) => {
+          // Convertir strings ISO de vuelta a Date objects
+          statsMap[item.apiKeyId] = {
+            ...item.stats,
+            oldestRequestTimestamp: item.stats.oldestRequestTimestamp ? new Date(item.stats.oldestRequestTimestamp) : null,
+            newestRequestTimestamp: item.stats.newestRequestTimestamp ? new Date(item.stats.newestRequestTimestamp) : null,
+            resetTime: item.stats.resetTime ? new Date(item.stats.resetTime) : null,
+          };
+        });
+        setApiStats(statsMap);
+      }
+    } catch (error) {
+      console.error('Error loading API stats:', error);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
+
+  const formatTimeRemaining = (resetTime: Date | null, currentTime: number = Date.now()): string => {
+    if (!resetTime) return 'N/A';
+    const now = new Date(currentTime);
+    const diff = resetTime.getTime() - now.getTime();
+    
+    if (diff <= 0) return 'Regenerado';
+    
+    const minutes = Math.floor(diff / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+    
+    if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    }
+    return `${seconds}s`;
+  };
+
+  const getQuotaPercentage = (used: number, limit: number): number => {
+    if (limit === 0) return 0;
+    return Math.min(100, (used / limit) * 100);
+  };
+
+  const getStatusColor = (percentage: number): string => {
+    if (percentage >= 90) return 'text-destructive';
+    if (percentage >= 70) return 'text-yellow-500';
+    return 'text-primary';
+  };
+
+  const getStatusBgColor = (percentage: number): string => {
+    if (percentage >= 90) return 'bg-destructive';
+    if (percentage >= 70) return 'bg-yellow-500';
+    return 'bg-primary';
+  };
+
   const handleRemoveApiKey = async (id: string) => {
     // Eliminar de BD
     try {
@@ -219,6 +321,10 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
 
       // Recargar desde BD
       await loadApiKeys();
+      // Limpiar stats de la key eliminada
+      const newStats = { ...apiStats };
+      delete newStats[id];
+      setApiStats(newStats);
     } catch (error) {
       console.error('Error deleting API key from server:', error);
       alert('Error de conexión al eliminar. Intenta de nuevo.');
@@ -263,26 +369,108 @@ export default function ApiKeyManager({ onApiKeysChange }: { onApiKeysChange: (k
           {apiKeys.length === 0 ? (
             <p className="text-muted-foreground text-sm">No hay cuentas conectadas</p>
           ) : (
-            <div className="space-y-3">
-              {apiKeys.map((keyInfo) => (
-                <Card key={keyInfo.id} className="p-4">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="font-semibold text-foreground">{keyInfo.fullname}</p>
-                      <p className="text-sm text-muted-foreground">{keyInfo.email}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {keyInfo.workspaces.length} espacio(s) de trabajo • {keyInfo.projects.length} proyecto(s)
-                      </p>
+            <div className="space-y-4">
+              {apiKeys.map((keyInfo) => {
+                const stats = apiStats[keyInfo.id];
+                const userEndpointLimit = 30;
+                const workspaceEndpointLimit = 100;
+                
+                const userUsed = stats?.userEndpointRequests || 0;
+                const workspaceUsed = stats?.workspaceEndpointRequests || 0;
+                const totalUsed = stats?.totalRequests || 0;
+                
+                const userPercentage = getQuotaPercentage(userUsed, userEndpointLimit);
+                const workspacePercentage = getQuotaPercentage(workspaceUsed, workspaceEndpointLimit);
+                
+                return (
+                  <Card key={keyInfo.id} className="p-4">
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <p className="font-semibold text-foreground">{keyInfo.fullname}</p>
+                          <p className="text-sm text-muted-foreground">{keyInfo.email}</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {keyInfo.workspaces.length} espacio(s) de trabajo • {keyInfo.projects.length} proyecto(s)
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveApiKey(keyInfo.id)}
+                          className="px-4 py-2 bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 text-sm transition-colors"
+                        >
+                          Eliminar
+                        </button>
+                      </div>
+                      
+                      {/* Estado de API */}
+                      <div className="border-t pt-4 space-y-3">
+                        <h4 className="text-sm font-semibold text-foreground">Estado de API Toggl</h4>
+                        
+                        {isLoadingStats && !stats ? (
+                          <p className="text-xs text-muted-foreground">Cargando estadísticas...</p>
+                        ) : stats ? (
+                          <div className="space-y-3">
+                            {/* Endpoints de Usuario (/me) */}
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-xs text-muted-foreground">Endpoints /me (User-Specific)</span>
+                                <span className={`text-xs font-medium ${getStatusColor(userPercentage)}`}>
+                                  {userUsed} / {userEndpointLimit} requests
+                                </span>
+                              </div>
+                              <div className="w-full bg-secondary rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full ${getStatusBgColor(userPercentage)}`}
+                                  style={{ width: `${Math.min(userPercentage, 100)}%` }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Restante: {stats.remainingQuota.userEndpoints} requests
+                              </p>
+                            </div>
+                            
+                            {/* Endpoints de Workspace */}
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <span className="text-xs text-muted-foreground">Endpoints Workspace/Organization</span>
+                                <span className={`text-xs font-medium ${getStatusColor(workspacePercentage)}`}>
+                                  {workspaceUsed} / {workspaceEndpointLimit} requests
+                                </span>
+                              </div>
+                              <div className="w-full bg-secondary rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full ${getStatusBgColor(workspacePercentage)}`}
+                                  style={{ width: `${Math.min(workspacePercentage, 100)}%` }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Restante: {stats.remainingQuota.workspaceEndpoints} requests
+                              </p>
+                            </div>
+                            
+                            {/* Total y tiempo de regeneración */}
+                            <div className="pt-2 border-t space-y-1">
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-muted-foreground">Total en última hora</span>
+                                <span className="text-xs font-medium">{totalUsed} requests</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-muted-foreground">Regeneración en</span>
+                                <span className="text-xs font-medium text-primary">
+                                  {formatTimeRemaining(stats.resetTime, timeNow)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Sin actividad reciente. Las estadísticas aparecerán después de realizar llamadas a la API.
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <button
-                      onClick={() => handleRemoveApiKey(keyInfo.id)}
-                      className="px-4 py-2 bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 text-sm transition-colors"
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </Card>
-              ))}
+                  </Card>
+                );
+              })}
             </div>
           )}
         </div>
