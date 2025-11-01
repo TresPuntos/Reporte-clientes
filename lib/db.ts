@@ -178,7 +178,7 @@ export async function deleteReportFromDB(id: string): Promise<void> {
   try {
     await sql`
       UPDATE reports 
-      SET is_active = false, updated_at = CURRENT_TIMESTAMP 
+      SET is_active = false
       WHERE id = ${id}
     `;
   } catch (error) {
