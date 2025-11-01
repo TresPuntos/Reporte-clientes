@@ -75,12 +75,19 @@ export async function POST(request: NextRequest) {
     }
     
     const report: ClientReport = await request.json();
+    console.log('Received report data:', { 
+      hasPassword: !!report._passwordPlaintext,
+      id: report.id,
+      name: report.name 
+    });
     
     // Si tiene contraseña en texto plano, hashearla
     let finalReport = report;
     if (report._passwordPlaintext) {
+      console.log('Hashing password...');
       const { hashPassword } = await import('@/lib/auth');
       const passwordHash = await hashPassword(report._passwordPlaintext);
+      console.log('Password hashed successfully');
       finalReport = { ...report, passwordHash };
       delete (finalReport as any)._passwordPlaintext;
     }
@@ -89,7 +96,8 @@ export async function POST(request: NextRequest) {
       id: finalReport.id, 
       name: finalReport.name, 
       hasPublicUrl: !!finalReport.publicUrl,
-      totalHours: finalReport.totalHours 
+      totalHours: finalReport.totalHours,
+      hasPasswordHash: !!finalReport.passwordHash
     });
     
     await saveReportToDB(finalReport);
